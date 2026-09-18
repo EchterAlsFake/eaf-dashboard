@@ -1,0 +1,15 @@
+.venv/
+data/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.egg-info/
+build/
+
+# The public repository intentionally excludes the live privileged boundary and
+# host-specific deployment inventory. These files remain only in the private
+# working tree used on the server.
+dashboard/broker_service.py
+deploy/
+SECURITY.md
+tests/test_revenue.py

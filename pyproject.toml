@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eaf-dashboard"
+version = "0.1.0"
+description = "Private administration and aggregate analytics dashboard for EchterAlsFake services"
+requires-python = ">=3.14"
+dependencies = [
+    "argon2-cffi>=25.1,<26",
+    "flask>=3.1,<4",
+    "gunicorn>=23,<24",
+    "httpx>=0.28,<1",
+    "webauthn>=2.8,<3",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.4,<9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["dashboard*"]
+
+[tool.setuptools.package-data]
+dashboard = ["templates/*.html", "static/*"]

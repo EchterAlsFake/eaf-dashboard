@@ -1,0 +1,4 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EAF Administration</title><link rel="stylesheet" href="/dashboard/static/dashboard.css"></head>
+<body class="auth-page"><main class="auth-card"><p class="eyebrow">ECHTER ALS FAKE</p><h1>Administration</h1>
+{% if configured %}<p>Enter the administrator password, then connect and confirm your USB security key.</p><form id="login-form"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required autofocus><button type="submit">Continue with security key</button></form><p id="status" role="status"></p>
+{% else %}<p>The dashboard is not initialized. Run the local administrator initialization command.</p>{% endif %}</main><script src="/dashboard/static/auth.js" defer></script></body></html>
