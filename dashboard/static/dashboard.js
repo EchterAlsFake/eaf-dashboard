@@ -5,7 +5,7 @@
     "echteralsfake.me": "Website", "www.echteralsfake.me": "Website redirect",
     "docs.echteralsfake.me": "Documentation", "api.echteralsfake.me": "Public API",
     "vplan.echteralsfake.me": "Substitution plan", "mcp.echteralsfake.me": "Public MCP",
-    "licenses.echteralsfake.me": "Licensing API", "ip.echteralsfake.me": "IP service",
+    "licenses.pornfetch.to": "Licensing API", "ip.echteralsfake.me": "IP service",
   };
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
   const pretty = (key) => key.replace(/_/g, " ").replace(/\b\w/g, (character) => character.toUpperCase());
