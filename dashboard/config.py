@@ -19,14 +19,9 @@ class Settings:
     def load(cls) -> "Settings":
         data_dir = Path(os.environ.get("EAF_DASHBOARD_DATA_DIR", "./data")).resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
-        secret_file = data_dir / ".secret-key"
-        if secret_file.exists():
-            secret_key = secret_file.read_text(encoding="utf-8").strip()
-        else:
-            secret_key = os.urandom(32).hex()
-            fd = os.open(secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(secret_key + "\n")
+        secret_key = os.environ.get("SECRET_KEY", "").strip()
+        if not secret_key:
+            raise RuntimeError("SECRET_KEY must be provided through a runtime credential")
         if len(secret_key) < 32:
             raise RuntimeError("Dashboard secret key is invalid")
         rp_id = os.environ.get("EAF_DASHBOARD_RP_ID", "echteralsfake.me").strip().lower()
