@@ -20,8 +20,14 @@ The repository contains:
 - the local SQLite schema for administrator state, audit events, and aggregate
   usage counters;
 - privacy-preserving visitor counting that stores no raw IP address;
+- a least-privileged host broker with an explicit operation and service allowlist;
+- a multi-server federation engine and telemetry database for servers on the local network;
+- embeddable Web Components, iframes, and CORS REST APIs for third-party websites;
+- a zero-dependency Python 3 node telemetry agent (`dashboard/agent/eaf-node-agent.py`);
 - the dependency definition and locked dependency graph;
 - tests for the non-privileged application boundary.
+
+For complete multi-server deployment and embedding instructions, see [MULTI-SERVER-FEDERATION.md](file:///home/asuna/analysis/eaf-dashboard/MULTI-SERVER-FEDERATION.md).
 
 Authentication code is included intentionally. Security must rely on private
 keys, random secrets, access control, and isolation rather than on hiding the
@@ -30,11 +36,8 @@ this repository.
 
 ## What is not included
 
-The public snapshot omits the parts that describe or control the live host in
-too much detail:
+The public snapshot still omits secrets and host-specific recovery material:
 
-- the root broker implementation and its database queries, service allowlist,
-  backup commands, and host paths;
 - production systemd units and reverse-proxy configuration;
 - the internal operational security review and recovery runbook;
 - live databases, secret keys, enrollment links, passkeys, sessions, logs,
@@ -42,10 +45,11 @@ too much detail:
 - the broker-specific revenue test, because it mirrors private integration
   details that are intentionally omitted.
 
-The checked-in broker client only defines the narrow local interface expected by
-the web process. A deployment needs its own independently reviewed provider for
-that interface. Copying this repository alone cannot restart services, read the
-other applications' databases, or create production backups.
+The checked-in broker server implements the narrow local interface expected by
+the web process. It must run as the unprivileged account that owns the services;
+the web container should receive only a bind mount of its Unix socket. Database
+paths, the backup directory, and logical-name-to-systemd-unit mappings are all
+runtime configuration rather than browser-controlled values.
 
 ## Privacy model
 
@@ -84,9 +88,12 @@ uv run pytest -q tests/test_dashboard.py
 
 The web process can be exercised with a missing broker socket; broker-backed
 views then fail closed with a generic data-source error. A real deployment must
-place the application behind HTTPS, bind it to a private listener, supply a
-least-privileged broker, and add service-manager and reverse-proxy confinement
-appropriate to its host.
+place the application behind HTTPS, bind it to a private listener, run
+`python -m dashboard.broker_server` as an unprivileged host service, and mount
+only its socket directory at `/run/eaf-dashboard`. Run
+`python -m dashboard.cli metrics` periodically to import the aggregate Caddy
+counters. Caddy metrics need `metrics { per_host }` enabled; access logging is
+not required.
 
 ## Security reports
 

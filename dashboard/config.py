@@ -16,13 +16,13 @@ class Settings:
     secure_cookie: bool
 
     @classmethod
-    def load(cls) -> "Settings":
+    def load(cls, *, require_secret: bool = True) -> "Settings":
         data_dir = Path(os.environ.get("EAF_DASHBOARD_DATA_DIR", "./data")).resolve()
         data_dir.mkdir(parents=True, exist_ok=True)
         secret_key = os.environ.get("SECRET_KEY", "").strip()
-        if not secret_key:
+        if require_secret and not secret_key:
             raise RuntimeError("SECRET_KEY must be provided through a runtime credential")
-        if len(secret_key) < 32:
+        if require_secret and len(secret_key) < 32:
             raise RuntimeError("Dashboard secret key is invalid")
         rp_id = os.environ.get("EAF_DASHBOARD_RP_ID", "echteralsfake.me").strip().lower()
         origin = os.environ.get(

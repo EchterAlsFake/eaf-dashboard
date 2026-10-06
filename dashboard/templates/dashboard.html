@@ -1,3 +1,134 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EAF Dashboard</title><link rel="stylesheet" href="/dashboard/static/dashboard.css"></head><body>
-<header class="topbar"><div><span class="eyebrow">ECHTER ALS FAKE</span><h1>Operations</h1></div><nav aria-label="Dashboard navigation"><button class="nav active" data-view="overview">Overview</button><button class="nav" data-view="traffic">Traffic</button><button class="nav" data-view="revenue">Revenue</button><button class="nav" data-view="payments">Payments</button><button class="nav" data-view="licenses">Licenses</button><button class="nav" data-view="errors">Errors</button><button class="nav" data-view="feedback">Feedback</button><button class="nav" data-view="checklist">Projects</button><a class="nav" href="/dashboard/keygen/">Keygen</a><button id="logout" class="nav">Log out</button></nav></header>
-<main id="content" class="content" aria-live="polite"><p>Loading…</p></main><template id="overview-template"><section><div class="section-head"><div><p class="eyebrow">LIVE STATE</p><h2>Overview</h2></div><button id="backup">Create database backup</button></div><div id="summary" class="cards"></div><h3>Services</h3><div id="services" class="service-grid"></div><h3>Last 30 days</h3><div id="usage"></div></section></template><script src="/dashboard/static/auth.js"></script><script src="/dashboard/static/dashboard.js" defer></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EAF Infrastructure Dashboard</title>
+  <link rel="stylesheet" href="/dashboard/static/dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-group">
+      <span class="eyebrow">MSI ORIGIN & LAN FLEET</span>
+      <div class="brand-title">
+        <h1>Infrastructure Operations</h1>
+        <div id="topbar-status" class="topbar-status">
+          <span class="pulse-indicator online"></span>
+          <span id="topbar-status-text">Connecting…</span>
+        </div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="refresh-control" title="Live Auto-Refresh Interval">
+        <label for="auto-refresh">Refresh:</label>
+        <select id="auto-refresh">
+          <option value="0">Off</option>
+          <option value="10">10s</option>
+          <option value="20" selected>20s</option>
+          <option value="60">60s</option>
+        </select>
+      </div>
+      <nav aria-label="Dashboard navigation">
+        <button class="nav active" data-view="overview">Overview</button>
+        <button class="nav" data-view="nodes">LAN Fleet & Servers</button>
+        <button class="nav" data-view="embed">Embed & Integrations</button>
+        <button class="nav" data-view="traffic">Traffic</button>
+        <button class="nav" data-view="revenue">Revenue</button>
+        <button class="nav" data-view="payments">Payments</button>
+        <button class="nav" data-view="licenses">Licenses</button>
+        <button class="nav" data-view="errors">Errors</button>
+        <button class="nav" data-view="feedback">Feedback</button>
+        <button class="nav" data-view="checklist">Projects</button>
+        <a class="nav" href="/dashboard/keygen/" target="_blank" rel="noopener">Keygen ↗</a>
+        <button id="logout" class="nav logout-btn">Log out</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="content" class="content" aria-live="polite">
+    <p class="loading-state">Loading infrastructure state…</p>
+  </main>
+
+  <template id="overview-template">
+    <section>
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">REAL-TIME TELEMETRY</p>
+          <h2>System Overview</h2>
+        </div>
+        <div class="head-actions">
+          <button id="backup" class="action-btn">Create Database Backup</button>
+        </div>
+      </div>
+
+      <!-- Host Hardware & Resource Vitals Bar -->
+      <div class="section-label">HOST SYSTEM VITALS · MSI STEALTH 15M (192.168.0.11)</div>
+      <div id="vitals" class="vitals-grid"></div>
+
+      <!-- Application Core Metrics Summary -->
+      <div class="section-label">APPLICATION HEALTH & METRICS</div>
+      <div id="summary" class="cards"></div>
+
+      <!-- Live Managed Container Services -->
+      <div class="section-head-sub">
+        <h3>Managed Rootless Services</h3>
+        <span class="sub-label">Quadlet systemd containers & host broker</span>
+      </div>
+      <div id="services" class="service-grid"></div>
+
+      <!-- Traffic Trends -->
+      <div class="section-head-sub">
+        <h3>Public Endpoints Traffic · Last 30 Days</h3>
+        <span class="sub-label">Aggregate Caddy counters & deduplicated visitors</span>
+      </div>
+      <div id="usage"></div>
+    </section>
+  </template>
+
+  <!-- Dialog for Adding LAN Nodes -->
+  <dialog id="node-modal" class="modal">
+    <form method="dialog" id="node-form" class="modal-card">
+      <div class="modal-header">
+        <h3>Register New LAN Server / Node</h3>
+        <button type="button" class="close-btn" id="close-modal">&times;</button>
+      </div>
+      <p class="modal-desc">
+        Connect another server running on the same router + Ethernet (<code class="lan-code">192.168.0.x</code>) to aggregate telemetry, monitor hosted websites, and embed widgets.
+      </p>
+      <div class="form-group">
+        <label for="node-id-input">Unique Node ID</label>
+        <input id="node-id-input" placeholder="e.g. node-acer-web" required pattern="[a-zA-Z0-9_\-]+">
+      </div>
+      <div class="form-group">
+        <label for="node-name-input">Display Name</label>
+        <input id="node-name-input" placeholder="e.g. Acer Server 2 (Next.js & Blog)" required>
+      </div>
+      <div class="form-group">
+        <label for="node-address-input">LAN Ethernet IP Address</label>
+        <input id="node-address-input" placeholder="e.g. 192.168.0.45" required>
+      </div>
+      <div class="form-group">
+        <label for="node-role-input">Server Role</label>
+        <select id="node-role-input">
+          <option value="web-server">Web Application Server</option>
+          <option value="database">Database / Storage Node</option>
+          <option value="media">Media / Streaming Server</option>
+          <option value="worker">Background Worker Node</option>
+          <option value="general">General Linux Server</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="node-probe-input">Health Check URL (Optional)</label>
+        <input id="node-probe-input" placeholder="e.g. http://192.168.0.45:9100/health or http://192.168.0.45:3000/api/health">
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="cancel-node" class="btn-secondary">Cancel</button>
+        <button type="submit" class="btn-primary">Register Server</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/dashboard/static/auth.js"></script>
+  <script src="/dashboard/static/dashboard.js" defer></script>
+</body>
+</html>

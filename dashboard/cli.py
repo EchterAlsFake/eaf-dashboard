@@ -14,7 +14,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Manage the local dashboard administrator")
     parser.add_argument("command", choices=("initialize", "enroll", "reset", "metrics"))
     args = parser.parse_args()
-    settings = Settings.load()
+    # The metrics importer only needs the data directory and broker socket. The
+    # dashboard secret is injected into Gunicorn by the entrypoint and is
+    # intentionally unavailable to unrelated `podman exec` processes.
+    settings = Settings.load(require_secret=args.command != "metrics")
     store = Store(settings.database_path)
     store.initialize()
     if args.command == "metrics":

@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System Status</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card: #111827;
+      --border: #1f293d;
+      --text: #f3f4f6;
+      --muted: #9ca3af;
+      --accent: #3b82f6;
+      --green: #10b981;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      padding: 12px;
+      font-size: 13px;
+      line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
+    }
+    .widget-container {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+      animation: pulse 2s infinite;
+    }
+    .status-dot.degraded {
+      background: var(--yellow);
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+    }
+    .status-dot.offline {
+      background: var(--red);
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.7; transform: scale(0.95); }
+    }
+    .title {
+      font-weight: 600;
+      font-size: 13px;
+      letter-spacing: 0.02em;
+    }
+    .badge {
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 12px;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--green);
+      font-weight: 600;
+    }
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .metric {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 6px;
+      padding: 8px;
+      text-align: center;
+    }
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 2px;
+    }
+    .metric strong {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .services-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.02);
+      font-size: 12px;
+    }
+    .service-name {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+    }
+    .mini-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+    .service-status {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--green);
+    }
+    .footer {
+      margin-top: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      padding-top: 6px;
+    }
+    .footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="widget-container" id="widget">
+    <div class="header">
+      <div class="title-group">
+        <span class="status-dot" id="cluster-dot"></span>
+        <span class="title" id="cluster-title">Origin & LAN Fleet</span>
+      </div>
+      <span class="badge" id="cluster-badge">OPERATIONAL</span>
+    </div>
+
+    <div class="metrics-grid">
+      <div class="metric">
+        <span>Nodes</span>
+        <strong id="m-nodes">—</strong>
+      </div>
+      <div class="metric">
+        <span>CPU Load</span>
+        <strong id="m-cpu">—</strong>
+      </div>
+      <div class="metric">
+        <span>RAM Used</span>
+        <strong id="m-mem">—</strong>
+      </div>
+    </div>
+
+    <div class="services-list" id="services">
+      <div class="service-row">
+        <div class="service-name"><span class="mini-dot"></span><span>pornfetch.to</span></div>
+        <span class="service-status">Operational</span>
+      </div>
+      <div class="service-row">
+        <div class="service-name"><span class="mini-dot"></span><span>licensing API</span></div>
+        <span class="service-status">Operational</span>
+      </div>
+      <div class="service-row">
+        <div class="service-name"><span class="mini-dot"></span><span>Rosenpass Post-Quantum</span></div>
+        <span class="service-status">Operational</span>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>Auto-refreshes every 15s</span>
+      <span id="last-update">Connecting…</span>
+    </div>
+  </div>
+
+  <script>
+    async function update() {
+      try {
+        const res = await fetch("/dashboard/api/embed/data");
+        if (!res.ok) return;
+        const d = await res.json();
+        
+        const dot = document.getElementById("cluster-dot");
+        const badge = document.getElementById("cluster-badge");
+        if (d.cluster.status === "operational") {
+          dot.className = "status-dot";
+          badge.textContent = "OPERATIONAL";
+          badge.style.color = "var(--green)";
+        } else if (d.cluster.status === "degraded") {
+          dot.className = "status-dot degraded";
+          badge.textContent = "DEGRADED";
+          badge.style.color = "var(--yellow)";
+        } else {
+          dot.className = "status-dot offline";
+          badge.textContent = "OFFLINE";
+          badge.style.color = "var(--red)";
+        }
+
+        document.getElementById("m-nodes").textContent = `${d.cluster.nodes_online}/${d.cluster.nodes_total}`;
+        document.getElementById("m-cpu").textContent = `${d.host.cpu_percent}%`;
+        document.getElementById("m-mem").textContent = `${d.host.memory_percent}%`;
+
+        if (d.services && d.services.length) {
+          const sList = document.getElementById("services");
+          sList.innerHTML = d.services.map(s => `
+            <div class="service-row">
+              <div class="service-name"><span class="mini-dot" style="background:${s.status === 'online' ? 'var(--green)' : 'var(--red)'}"></span><span>${s.name}</span></div>
+              <span class="service-status" style="color:${s.status === 'online' ? 'var(--green)' : 'var(--red)'}">${s.status === 'online' ? 'Active' : 'Offline'}</span>
+            </div>
+          `).join("");
+        }
+
+        const now = new Date();
+        document.getElementById("last-update").textContent = now.toLocaleTimeString();
+      } catch (e) {
+        document.getElementById("last-update").textContent = "Update failed";
+      }
+    }
+    update();
+    setInterval(update, 15000);
+  </script>
+</body>
+</html>

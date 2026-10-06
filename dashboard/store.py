@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import secrets
 import sqlite3
@@ -74,6 +75,35 @@ CREATE TABLE IF NOT EXISTS security_hourly (
     value INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(hour, event)
 );
+CREATE TABLE IF NOT EXISTS node (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    address TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'server',
+    auth_token TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    auto_probe INTEGER NOT NULL DEFAULT 1,
+    probe_url TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS node_telemetry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    status TEXT NOT NULL,
+    cpu_percent REAL,
+    memory_used_mb REAL,
+    memory_total_mb REAL,
+    disk_used_gb REAL,
+    disk_total_gb REAL,
+    load_1m REAL,
+    uptime_seconds INTEGER,
+    services_json TEXT,
+    metrics_json TEXT,
+    FOREIGN KEY(node_id) REFERENCES node(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_node_telemetry_node_time ON node_telemetry(node_id, timestamp DESC);
 """
 
 
@@ -116,6 +146,13 @@ class Store:
                 connection.execute(
                     "ALTER TABLE administrator ADD COLUMN "
                     "session_generation INTEGER NOT NULL DEFAULT 1"
+                )
+            if not connection.execute("SELECT 1 FROM node WHERE id='node-origin'").fetchone():
+                now = utc_now().isoformat()
+                connection.execute(
+                    "INSERT INTO node(id,name,address,role,is_active,auto_probe,probe_url,created_at,updated_at) "
+                    "VALUES('node-origin','MSI Stealth 15M (Origin Gateway)','192.168.0.11','gateway',1,1,'http://127.0.0.1:18010/dashboard/healthz',?,?)",
+                    (now, now),
                 )
 
     def administrator(self) -> sqlite3.Row | None:
@@ -294,8 +331,12 @@ class Store:
             row = connection.execute(
                 "SELECT value FROM metric_snapshot WHERE series=?", (series,)
             ).fetchone()
-            previous = float(row[0]) if row else value
-            delta = max(0, math.floor(value - previous))
+            previous = float(row[0]) if row else 0.0
+            # Import the current counter on first observation. If Caddy has
+            # restarted and its counter decreased, the new value is the number
+            # of requests since that reset rather than a negative delta.
+            delta = math.floor(value if row and value < previous else value - previous)
+            delta = max(0, delta)
             connection.execute(
                 "INSERT INTO metric_snapshot(series,value,observed_at) VALUES(?,?,?) "
                 "ON CONFLICT(series) DO UPDATE SET value=excluded.value,observed_at=excluded.observed_at",
@@ -320,3 +361,153 @@ class Store:
                     (cutoff,),
                 )
             ]
+
+    def list_nodes(self) -> list[dict]:
+        with self.connect() as connection:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT id, name, address, role, auth_token, is_active, auto_probe, probe_url, created_at, updated_at "
+                    "FROM node ORDER BY CASE WHEN role='gateway' THEN 0 ELSE 1 END, created_at ASC"
+                )
+            ]
+
+    def get_node(self, node_id: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT id, name, address, role, auth_token, is_active, auto_probe, probe_url, created_at, updated_at "
+                "FROM node WHERE id=?",
+                (node_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def upsert_node(
+        self,
+        id: str,
+        name: str,
+        address: str,
+        role: str = "server",
+        auth_token: str | None = None,
+        is_active: bool = True,
+        auto_probe: bool = True,
+        probe_url: str | None = None,
+    ) -> dict:
+        now = utc_now().isoformat()
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO node(id, name, address, role, auth_token, is_active, auto_probe, probe_url, created_at, updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "name=excluded.name, address=excluded.address, role=excluded.role, "
+                "auth_token=COALESCE(excluded.auth_token, node.auth_token), "
+                "is_active=excluded.is_active, auto_probe=excluded.auto_probe, "
+                "probe_url=excluded.probe_url, updated_at=excluded.updated_at",
+                (
+                    id,
+                    name,
+                    address,
+                    role,
+                    auth_token,
+                    int(is_active),
+                    int(auto_probe),
+                    probe_url,
+                    now,
+                    now,
+                ),
+            )
+        return self.get_node(id) or {}
+
+    def delete_node(self, node_id: str) -> bool:
+        if node_id == "node-origin":
+            return False  # Protect origin node from deletion
+        with self.connect() as connection:
+            deleted = connection.execute("DELETE FROM node WHERE id=?", (node_id,)).rowcount
+            return deleted > 0
+
+    def record_node_telemetry(
+        self,
+        node_id: str,
+        status: str = "online",
+        cpu_percent: float | None = None,
+        memory_used_mb: float | None = None,
+        memory_total_mb: float | None = None,
+        disk_used_gb: float | None = None,
+        disk_total_gb: float | None = None,
+        load_1m: float | None = None,
+        uptime_seconds: int | None = None,
+        services: list[dict] | None = None,
+        metrics: dict | None = None,
+    ) -> None:
+        now = utc_now().isoformat()
+        services_str = json.dumps(services) if services is not None else None
+        metrics_str = json.dumps(metrics) if metrics is not None else None
+        with self.connect() as connection:
+            connection.execute(
+                "INSERT INTO node_telemetry("
+                "node_id, timestamp, status, cpu_percent, memory_used_mb, memory_total_mb, "
+                "disk_used_gb, disk_total_gb, load_1m, uptime_seconds, services_json, metrics_json"
+                ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    node_id,
+                    now,
+                    status,
+                    cpu_percent,
+                    memory_used_mb,
+                    memory_total_mb,
+                    disk_used_gb,
+                    disk_total_gb,
+                    load_1m,
+                    uptime_seconds,
+                    services_str,
+                    metrics_str,
+                ),
+            )
+            # Prune telemetry older than 7 days
+            cutoff = (utc_now() - timedelta(days=7)).isoformat()
+            connection.execute("DELETE FROM node_telemetry WHERE timestamp < ?", (cutoff,))
+
+    def latest_node_telemetry(self, node_id: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT timestamp, status, cpu_percent, memory_used_mb, memory_total_mb, "
+                "disk_used_gb, disk_total_gb, load_1m, uptime_seconds, services_json, metrics_json "
+                "FROM node_telemetry WHERE node_id=? ORDER BY timestamp DESC LIMIT 1",
+                (node_id,),
+            ).fetchone()
+            if not row:
+                return None
+            res = dict(row)
+            try:
+                res["services"] = json.loads(res.pop("services_json") or "[]")
+            except (ValueError, TypeError):
+                res["services"] = []
+            try:
+                res["metrics"] = json.loads(res.pop("metrics_json") or "{}")
+            except (ValueError, TypeError):
+                res["metrics"] = {}
+            return res
+
+    def list_nodes_with_telemetry(self) -> list[dict]:
+        nodes = self.list_nodes()
+        result = []
+        now = utc_now()
+        for node in nodes:
+            telemetry = self.latest_node_telemetry(node["id"])
+            item = dict(node)
+            if telemetry:
+                item["telemetry"] = telemetry
+                item["status"] = telemetry.get("status", "online")
+                try:
+                    last_seen = datetime.fromisoformat(telemetry["timestamp"])
+                    age_seconds = (now - last_seen).total_seconds()
+                    item["last_seen_seconds_ago"] = int(age_seconds)
+                    if age_seconds > 120 and item["status"] == "online" and node["id"] != "node-origin":
+                        item["status"] = "offline"
+                except Exception:
+                    item["last_seen_seconds_ago"] = None
+            else:
+                item["telemetry"] = None
+                item["status"] = "unknown"
+                item["last_seen_seconds_ago"] = None
+            result.append(item)
+        return result

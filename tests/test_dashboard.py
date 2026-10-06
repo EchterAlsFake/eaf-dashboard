@@ -92,6 +92,25 @@ def test_visit_is_host_scoped_and_deduplicated(app):
     assert client.post("/__eaf/visit", json={"route": "home"}, headers={"Host": "brain.echteralsfake.me"}).status_code == 400
 
 
+def test_visit_accepts_configured_production_domain(tmp_path):
+    settings = Settings(
+        data_dir=tmp_path,
+        database_path=tmp_path / "dashboard.db",
+        secret_key="test-secret-key-that-is-long-enough",
+        rp_id="pornfetch.to",
+        origin="https://pornfetch.to",
+        broker_socket=tmp_path / "missing.sock",
+        secure_cookie=False,
+    )
+    application = create_app(settings)
+    application.config.update(TESTING=True)
+    client = application.test_client()
+    headers = {"Host": "pornfetch.to", "Origin": "https://pornfetch.to"}
+    assert client.post("/__eaf/visit", json={"route": "home"}, headers=headers).status_code == 204
+    usage = Store(application.extensions["dashboard_settings"].database_path).usage(1)
+    assert any(item["host"] == "pornfetch.to" for item in usage)
+
+
 def test_bootstrap_tokens_are_single_use(tmp_path):
     store = Store(tmp_path / "state.db")
     store.initialize()
@@ -163,3 +182,105 @@ def test_store_initialization_is_concurrency_safe(tmp_path):
     with ThreadPoolExecutor(max_workers=8) as executor:
         list(executor.map(lambda _index: Store(database).initialize(), range(24)))
     assert Store(database).session_generation() is None
+
+
+def test_request_counters_import_initial_value_and_survive_reset(tmp_path):
+    store = Store(tmp_path / "metrics.db")
+    store.initialize()
+    store.record_counter_delta("caddy:http_requests:pornfetch.to", "pornfetch.to", 60)
+    store.record_counter_delta("caddy:http_requests:pornfetch.to", "pornfetch.to", 63)
+    store.record_counter_delta("caddy:http_requests:pornfetch.to", "pornfetch.to", 2)
+    requests = [item for item in store.usage(1) if item["metric"] == "requests"]
+    assert requests == [{
+        "day": requests[0]["day"],
+        "host": "pornfetch.to",
+        "route_group": "api",
+        "metric": "requests",
+        "value": 65,
+    }]
+
+
+def test_metrics_configuration_does_not_require_authentication_secret(monkeypatch, tmp_path):
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    monkeypatch.setenv("EAF_DASHBOARD_DATA_DIR", str(tmp_path))
+    settings = Settings.load(require_secret=False)
+    assert settings.secret_key == ""
+    assert settings.database_path == tmp_path / "dashboard.db"
+
+
+def test_node_federation_store_and_telemetry(tmp_path):
+    store = Store(tmp_path / "federation.db")
+    store.initialize()
+    # Default origin node should exist
+    nodes = store.list_nodes()
+    assert any(n["id"] == "node-origin" for n in nodes)
+
+    # Upsert a new node
+    created = store.upsert_node(
+        id="node-blog-srv",
+        name="Blog Server (Acer)",
+        address="192.168.0.45",
+        role="web-server",
+        probe_url="http://192.168.0.45:3000/api/health",
+    )
+    assert created["id"] == "node-blog-srv"
+    assert created["name"] == "Blog Server (Acer)"
+
+    # Record telemetry
+    store.record_node_telemetry(
+        node_id="node-blog-srv",
+        status="online",
+        cpu_percent=12.5,
+        memory_used_mb=2048,
+        memory_total_mb=8192,
+        services=[{"name": "Blog", "status": "up", "latency_ms": 4.2}],
+        metrics={"active_sessions": 30},
+    )
+
+    with_telemetry = store.list_nodes_with_telemetry()
+    blog_node = next(n for n in with_telemetry if n["id"] == "node-blog-srv")
+    assert blog_node["status"] == "online"
+    assert blog_node["telemetry"]["cpu_percent"] == 12.5
+    assert blog_node["telemetry"]["services"][0]["name"] == "Blog"
+
+    # Delete node
+    assert store.delete_node("node-blog-srv") is True
+    # Origin node cannot be deleted
+    assert store.delete_node("node-origin") is False
+
+
+def test_heartbeat_api_and_embed_data(app):
+    client = app.test_client()
+
+    # Heartbeat from a remote server (no CSRF or session required)
+    heartbeat_payload = {
+        "node_id": "remote-app-1",
+        "name": "E-Commerce App",
+        "address": "192.168.0.80",
+        "role": "web-server",
+        "status": "online",
+        "cpu_percent": 24.1,
+        "memory_used_mb": 1500,
+        "memory_total_mb": 4096,
+        "disk_used_gb": 20.0,
+        "disk_total_gb": 100.0,
+        "services": [{"name": "Shop", "url": "http://192.168.0.80:80", "status": "up"}],
+    }
+    resp = client.post("/dashboard/api/nodes/heartbeat", json=heartbeat_payload)
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+
+    # Public embed data endpoint (with CORS headers)
+    embed_resp = client.get("/dashboard/api/embed/data")
+    assert embed_resp.status_code == 200
+    assert embed_resp.headers.get("Access-Control-Allow-Origin") == "*"
+    data = embed_resp.get_json()
+    assert "cluster" in data
+    assert "services" in data
+
+    # Embed view template (iframe-embeddable)
+    view_resp = client.get("/dashboard/embed/view?widget=card")
+    assert view_resp.status_code == 200
+    assert "X-Frame-Options" not in view_resp.headers  # Must allow framing
+    assert "frame-ancestors *" in view_resp.headers.get("Content-Security-Policy", "")
+
