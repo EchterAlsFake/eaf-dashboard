@@ -728,7 +728,60 @@ fetch("${originUrl}/dashboard/api/embed/data")
 
   function showError(error) { content.innerHTML = `<p class="error">${esc(error.message)}</p>`; }
 
+  async function updatesView() {
+    const data = await eafAuth.json('/dashboard/api/updates');
+    const items = data.items || [];
+    const traffic = data.traffic || {items: []};
+    const bytes = value => `${number(Number(value) / 1048576)} MiB`;
+    const totals = traffic.items.reduce((a, i) => ({requests: a.requests + i.requests, bytes: a.bytes + i.bytes}), {requests: 0, bytes: 0});
+    content.innerHTML = `<h1>Updates & Downloads</h1>
+      <p><a href="/dashboard/updates" target="_blank" rel="noopener">Open in a separate window ↗</a></p>
+      <p>${number(items.length)} published files · ${bytes(items.reduce((a,i) => a+i.bytes,0))} stored</p>
+      <h2>Download traffic</h2>
+      <p>${number(totals.requests)} successful requests · ${bytes(totals.bytes)} transferred</p>
+      <p>Tracking since ${esc(traffic.started ? new Date(traffic.started * 1000).toLocaleString() : 'not yet enabled')}. Unique downloaders are estimates based on hashed IP addresses. Shared networks can merge people; changing IP addresses can count someone twice. Requests include resumed transfers; they do not prove a complete installation. Metadata requests are excluded. Statistics refresh within one minute.</p>
+      ${table(traffic.items.map(i => ({source: i.source, file: i.path, estimated_downloaders: i.downloaders, successful_requests: i.requests, partial_requests: i.ranges, transferred: bytes(i.bytes)})), '', 'download-search')}
+      <h2>Clean published updates</h2>
+      <p>Preview files and space before permanently removing a selection. Removing a current Qt archive withdraws its component and dependent components. Signed CLI targets must first be removed by publishing new signed metadata.</p>
+      <label>Source <select id="update-source">${['website','qt','standalone','cli','android'].map(s => `<option>${s}</option>`).join('')}</select></label>
+      <label>Remove <select id="update-scope"><option value="file">Individual file</option><option value="version">Entire version</option><option value="app">Entire app / component</option></select></label>
+      <label>Selection <select id="update-value"></select></label>
+      <button id="update-preview">Preview deletion</button>
+      <div id="update-plan" role="status"></div>
+      <h2>Published inventory</h2>
+      ${table(items.map(i => ({source:i.source, app:i.app, version:i.version, file:i.filename, stored:bytes(i.bytes), signed_reference:i.protected ? 'Protected' : ''})), '', 'inventory-search')}`;
+    attachTableSearch('download-search');
+    attachTableSearch('inventory-search');
+    const source = document.getElementById('update-source');
+    const scope = document.getElementById('update-scope');
+    const value = document.getElementById('update-value');
+    const panel = document.getElementById('update-plan');
+    function selectValues() {
+      const key = {file:'id',version:'version',app:'app'}[scope.value];
+      value.innerHTML = [...new Set(items.filter(i => i.source === source.value).map(i => i[key]))].sort().map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+      panel.replaceChildren();
+    }
+    source.addEventListener('change', selectValues);
+    scope.addEventListener('change', selectValues);
+    value.addEventListener('change', () => panel.replaceChildren());
+    selectValues();
+    document.getElementById('update-preview').addEventListener('click', async () => {
+      try {
+        const selection = {source:source.value, scope:scope.value, value:value.value};
+        const preview = await eafAuth.json('/dashboard/api/updates/preview', {method:'POST', body:JSON.stringify(selection)});
+        panel.innerHTML = `<p>Delete ${number(preview.files)} files and reclaim ${bytes(preview.bytes)}.</p><pre>${esc(preview.items.map(i => i.id).join('\n'))}</pre><p>Qt components withdrawn: ${esc(JSON.stringify(preview.withdrawn))}</p><button id="update-delete">Permanently delete previewed files</button>`;
+        document.getElementById('update-delete').addEventListener('click', async () => {
+          try {
+            await action('delete_update', {...selection, token:preview.token, id:selection.value}, selection.value);
+            await updatesView();
+          } catch (error) { panel.textContent = error.message; }
+        });
+      } catch (error) { panel.textContent = error.message; }
+    });
+  }
+
   const views = {
+    updates: updatesView,
     overview,
     nodes: nodesView,
     embed: embedView,
@@ -771,5 +824,5 @@ fetch("${originUrl}/dashboard/api/embed/data")
     setupRefresh();
   }
 
-  overview().catch(showError);
+  switchView(location.pathname === "/dashboard/updates" ? "updates" : "overview");
 })();

@@ -284,3 +284,42 @@ def test_heartbeat_api_and_embed_data(app):
     assert "X-Frame-Options" not in view_resp.headers  # Must allow framing
     assert "frame-ancestors *" in view_resp.headers.get("Content-Security-Policy", "")
 
+
+
+def test_update_inventory_and_window_require_auth(app):
+    client = app.test_client()
+    assert client.get('/dashboard/api/updates').status_code == 401
+    assert client.get('/dashboard/updates').status_code == 401
+    assert client.post('/dashboard/api/updates/preview', json={}, headers={'Origin': 'https://echteralsfake.me'}).status_code == 401
+
+
+def test_update_preview_and_delete_use_broker_and_audit(app, monkeypatch):
+    calls = []
+    def call(socket, operation, **arguments):
+        calls.append((operation, arguments))
+        return {'items': [], 'files': 2, 'bytes': 100, 'token': 'preview-token'}
+    monkeypatch.setattr('dashboard.app.broker_call', call)
+    client, store = authenticated_client(app)
+    assert client.get('/dashboard/api/updates').status_code == 200
+    headers = {'Origin': 'https://echteralsfake.me', 'X-EAF-CSRF': 'test-csrf'}
+    selection = dict(source='website', scope='version', value='1.2.3')
+    assert client.post('/dashboard/api/updates/preview', json=selection, headers=headers).json['token'] == 'preview-token'
+    response = client.post('/dashboard/api/actions/delete_update', json=dict(selection, token='preview-token', id='1.2.3', confirmation='1.2.3'), headers=headers)
+    assert response.status_code == 200
+    assert calls[-1] == ('delete_update', dict(selection, token='preview-token', id='1.2.3'))
+    with store.connect() as connection:
+        assert connection.execute("SELECT outcome FROM audit_event WHERE action='delete_update'").fetchone()[0] == 'success'
+
+
+def test_update_deletion_requires_csrf_fresh_auth_and_matching_confirmation(app):
+    client, _ = authenticated_client(app)
+    selection = dict(source='qt', scope='app', value='linux_amd64/app', id='app', confirmation='app')
+    origin = {'Origin': 'https://echteralsfake.me'}
+    assert client.post('/dashboard/api/actions/delete_update', json=selection, headers=origin).status_code == 403
+    headers = dict(origin, **{'X-EAF-CSRF':'test-csrf'})
+    with client.session_transaction(path='/dashboard') as current:
+        current['step_up_at'] = 0
+    assert client.post('/dashboard/api/actions/delete_update', json=selection, headers=headers).status_code == 428
+    with client.session_transaction(path='/dashboard') as current:
+        current['step_up_at'] = int(time.time())
+    assert client.post('/dashboard/api/actions/delete_update', json=dict(selection, confirmation='wrong'), headers=headers).status_code == 400

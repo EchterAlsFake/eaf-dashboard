@@ -169,6 +169,30 @@ def create_app(settings: Settings | None = None) -> Flask:
             return render_template("login.html", configured=store.administrator() is not None), 401
         return render_template("dashboard.html")
 
+    @app.get("/dashboard/updates")
+    @require_auth
+    def updates_page():
+        return render_template("dashboard.html", initial_view="updates")
+
+    @app.get("/dashboard/api/updates")
+    @require_auth
+    def updates_inventory():
+        try:
+            return jsonify(broker_call(active.broker_socket, "updates"))
+        except BrokerError:
+            return jsonify(error="update_source_unavailable"), 503
+
+    @app.post("/dashboard/api/updates/preview")
+    @require_auth
+    def updates_preview():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            abort(400)
+        try:
+            return jsonify(broker_call(active.broker_socket, "preview_update", **payload))
+        except BrokerError:
+            return jsonify(error="selection_unavailable_or_referenced_by_signed_metadata"), 400
+
     @app.get("/dashboard/api/overview")
     @require_auth
     def overview():
@@ -407,6 +431,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     @require_auth
     def action(action: str):
         allowed = {
+            "delete_update": ("delete_update", "update"),
             "delete_error": ("delete_error", "error"),
             "delete_feedback": ("delete_feedback", "feedback"),
             "toggle_checklist": ("toggle_checklist", "checklist"),
