@@ -39,6 +39,7 @@
 
   let activeViewName = "overview";
   let refreshTimer = null;
+  let updatesLastInteraction = 0;
 
   async function stepUp() {
     const password = prompt("Re-enter the dashboard password to authorize this action:");
@@ -731,6 +732,7 @@ fetch("${originUrl}/dashboard/api/embed/data")
   async function updatesView() {
     const data = await eafAuth.json('/dashboard/api/updates');
     const items = data.items || [];
+    if (topbarStatusText) topbarStatusText.textContent = `${number(items.length)} published files`;
     const traffic = data.traffic || {items: []};
     const bytes = value => `${number(Number(value) / 1048576)} MiB`;
     const totals = traffic.items.reduce((a, i) => ({requests: a.requests + i.requests, bytes: a.bytes + i.bytes}), {requests: 0, bytes: 0});
@@ -742,7 +744,7 @@ fetch("${originUrl}/dashboard/api/embed/data")
       <p>Tracking since ${esc(traffic.started ? new Date(traffic.started * 1000).toLocaleString() : 'not yet enabled')}. Unique downloaders are estimates based on hashed IP addresses. Shared networks can merge people; changing IP addresses can count someone twice. Requests include resumed transfers; they do not prove a complete installation. Metadata requests are excluded. Statistics refresh within one minute.</p>
       ${table(traffic.items.map(i => ({source: i.source, file: i.path, estimated_downloaders: i.downloaders, successful_requests: i.requests, partial_requests: i.ranges, transferred: bytes(i.bytes)})), '', 'download-search')}
       <h2>Clean published updates</h2>
-      <p>Preview files and space before permanently removing a selection. Removing a current Qt archive withdraws its component and dependent components. Signed CLI targets must first be removed by publishing new signed metadata.</p>
+      <p>Preview files and space before permanently removing a selection. Removing a current Qt archive withdraws its component and dependent components. Signed CLI and Android targets must first be removed by publishing new signed metadata.</p>
       <label>Source <select id="update-source">${['website','qt','standalone','cli','android'].map(s => `<option>${s}</option>`).join('')}</select></label>
       <label>Remove <select id="update-scope"><option value="file">Individual file</option><option value="version">Entire version</option><option value="app">Entire app / component</option></select></label>
       <label>Selection <select id="update-value"></select></label>
@@ -761,6 +763,7 @@ fetch("${originUrl}/dashboard/api/embed/data")
       value.innerHTML = [...new Set(items.filter(i => i.source === source.value).map(i => i[key]))].sort().map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
       panel.replaceChildren();
     }
+    for (const control of [source, scope, value]) control.addEventListener('change', () => { updatesLastInteraction = Date.now(); });
     source.addEventListener('change', selectValues);
     scope.addEventListener('change', selectValues);
     value.addEventListener('change', () => panel.replaceChildren());
@@ -813,6 +816,7 @@ fetch("${originUrl}/dashboard/api/embed/data")
     const secs = Number(autoRefreshSelect?.value || 0);
     if (secs > 0) {
       refreshTimer = setInterval(() => {
+        if (activeViewName === 'updates' && (document.getElementById('update-plan')?.textContent || Date.now() - updatesLastInteraction < 120000 || ['update-source', 'update-scope', 'update-value'].includes(document.activeElement?.id))) return;
         const fn = views[activeViewName] || (() => records(activeViewName));
         fn().catch(console.error);
       }, secs * 1000);
