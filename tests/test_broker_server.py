@@ -30,6 +30,7 @@ def create_server_database(path: Path) -> None:
                 expected_price_currency TEXT,
                 expected_pay_amount TEXT,
                 expected_pay_currency TEXT,
+                customer_country TEXT,
                 status TEXT,
                 created_at TEXT,
                 finished_at TEXT
@@ -49,7 +50,7 @@ def create_server_database(path: Path) -> None:
             );
             INSERT INTO "transaction" VALUES
               ('session-1','payment-1','invoice','production','9.99','EUR','0.1','BTC',
-               'finished','2099-01-01T10:00:00+00:00','2099-01-01T10:05:00+00:00');
+               'Germany','finished','2099-01-01T10:00:00+00:00','2099-01-01T10:05:00+00:00');
             INSERT INTO license VALUES ('key-1','valid','session-1','2099-01-01',NULL);
             INSERT INTO checklist VALUES (1,'Ship it',0,'2099-01-01');
             """
@@ -87,6 +88,7 @@ def broker(tmp_path: Path) -> Broker:
 
 def test_broker_reads_and_mutates_allowlisted_records(broker: Broker):
     assert broker.list_payments()[0]["session_id"] == "session-1"
+    assert broker.list_payments()[0]["customer_country"] == "Germany"
     assert broker.list_licenses()[0]["state"] == "valid"
     assert broker.list_pocketbase("error_logs")[0]["message"] == "redacted report"
     assert broker.list_pocketbase("feedback") == []
@@ -224,3 +226,34 @@ def test_probe_node_handles_valid_and_invalid(monkeypatch, broker: Broker):
     assert result["status_code"] == 200
     assert result["data"] == {"status": "ok"}
 
+
+
+def test_lan_route_follows_current_gateway_and_ignores_vpn(monkeypatch, broker):
+    from types import SimpleNamespace
+    def command(args, **kwargs):
+        if "route" in args:
+            data = [dict(dev="wg-mgmt", gateway="10.60.0.1", metric=1),
+                    dict(dev="enp-test", gateway="192.168.178.1", prefsrc="192.168.178.201", metric=100)]
+        else:
+            assert args[-1] == "enp-test"
+            data = [dict(addr_info=[dict(family="inet", scope="global", local="192.168.178.201", prefixlen=24)])]
+        return SimpleNamespace(stdout=json.dumps(data))
+    monkeypatch.setattr("dashboard.broker_server.subprocess.run", command)
+    network = broker.lan_network()
+    assert network["address"] == "192.168.178.201"
+    assert network["gateway"] == "192.168.178.1"
+    assert network["subnet"] == "192.168.178.0/24"
+    assert broker.system_vitals()["lan_ip"] == network["address"]
+    monkeypatch.setattr("builtins.open", lambda *_a, **_kw: io.StringIO(
+        "IP address HW type Flags HW address Mask Device\n"
+        "192.168.178.1 0x1 0x2 aa:bb:cc:dd:ee:ff * enp-test\n"
+        "192.168.0.1 0x1 0x2 aa:bb:cc:dd:ee:aa * enp-test\n"
+        "10.89.10.23 0x1 0x2 aa:bb:cc:dd:ee:ab * podman0\n"))
+    assert broker.scan_lan() == [dict(ip="192.168.178.1", mac="aa:bb:cc:dd:ee:ff", interface="enp-test", is_gateway=True)]
+
+
+def test_missing_lan_route_does_not_invent_addresses(monkeypatch, broker):
+    from types import SimpleNamespace
+    monkeypatch.setattr("dashboard.broker_server.subprocess.run", lambda *_a, **_kw: SimpleNamespace(stdout="[]"))
+    assert broker.lan_network()["address"] is None
+    assert broker.scan_lan() == []

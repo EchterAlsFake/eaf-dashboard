@@ -8,6 +8,7 @@ only the small, allowlisted JSON protocol used by :mod:`dashboard.broker_client`
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -181,7 +182,33 @@ class Broker:
             })
         return result
 
+    def lan_network(self) -> dict:
+        """Read the host LAN route, never the container bridge or a guessed subnet."""
+        result = {"address": None, "gateway": None, "subnet": None,
+                  "interface": None, "router_name": os.environ.get("EAF_BROKER_ROUTER_NAME", "LAN router")}
+        try:
+            routes = json.loads(subprocess.run(
+                ["ip", "-j", "-4", "route", "show", "default"],
+                check=True, capture_output=True, text=True, timeout=3).stdout)
+            routes = [r for r in routes if r.get("gateway") and r.get("dev")
+                      and not r["dev"].startswith(("wg", "tun", "tap", "podman", "veth"))]
+            route = min(routes, key=lambda r: r.get("metric", 0))
+            interface = route["dev"]
+            addresses = json.loads(subprocess.run(
+                ["ip", "-j", "-4", "address", "show", "dev", interface],
+                check=True, capture_output=True, text=True, timeout=3).stdout)
+            candidates = [a for item in addresses for a in item.get("addr_info", [])
+                          if a.get("family") == "inet" and a.get("scope") == "global"]
+            address = next((a for a in candidates if a["local"] == route.get("prefsrc")), candidates[0])
+            subnet = ipaddress.ip_interface(f"{address['local']}/{address['prefixlen']}").network
+            result.update(address=address["local"], gateway=route["gateway"],
+                          subnet=str(subnet), interface=interface)
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError):
+            pass
+        return result
+
     def system_vitals(self) -> dict:
+        lan = self.lan_network()
         try:
             load1, load5, load15 = os.getloadavg()
         except OSError:
@@ -246,7 +273,8 @@ class Broker:
         return {
             "hostname": socket.gethostname(),
             "os": "Arch Linux",
-            "lan_ip": "192.168.0.11",
+            "lan_ip": lan["address"],
+            "lan": lan,
             "uptime_seconds": uptime_seconds,
             "cpu": {
                 "count": cpu_count,
@@ -307,24 +335,23 @@ class Broker:
             }
 
     def scan_lan(self) -> list[dict]:
+        network = self.lan_network()
+        if not network["subnet"]:
+            return []
+        subnet = ipaddress.ip_network(network["subnet"])
         devices = []
         try:
-            with open("/proc/net/arp") as f:
-                lines = f.readlines()
-                for line in lines[1:]:
+            with open("/proc/net/arp") as handle:
+                for line in handle.readlines()[1:]:
                     parts = line.split()
-                    if len(parts) >= 6:
-                        ip = parts[0]
-                        mac = parts[3]
-                        device = parts[5]
-                        if ip.startswith("192.168.0.") and mac != "00:00:00:00:00:00":
-                            devices.append({
-                                "ip": ip,
-                                "mac": mac,
-                                "interface": device,
-                                "is_gateway": (ip == "192.168.0.1"),
-                            })
-        except OSError:
+                    if len(parts) < 6:
+                        continue
+                    ip, _, _, mac, _, interface = parts[:6]
+                    if (interface == network["interface"] and ipaddress.ip_address(ip) in subnet
+                            and mac != "00:00:00:00:00:00"):
+                        devices.append({"ip": ip, "mac": mac, "interface": interface,
+                                        "is_gateway": ip == network["gateway"]})
+        except (OSError, ValueError):
             pass
         return devices
 
@@ -351,7 +378,7 @@ class Broker:
                 connection,
                 'SELECT session_id,provider_payment_id,provider_reference_type,environment,'
                 'expected_price_amount,expected_price_currency,expected_pay_amount,'
-                'expected_pay_currency,status,created_at,finished_at FROM "transaction" '
+                'expected_pay_currency,customer_country,status,created_at,finished_at FROM "transaction" '
                 "ORDER BY created_at DESC LIMIT 500",
             )
 

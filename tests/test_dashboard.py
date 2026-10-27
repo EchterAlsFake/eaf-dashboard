@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -252,7 +253,11 @@ def test_node_federation_store_and_telemetry(tmp_path):
 def test_heartbeat_api_and_embed_data(app):
     client = app.test_client()
 
-    # Heartbeat from a remote server (no CSRF or session required)
+    # Only pre-registered agents with their own token can report telemetry.
+    store = Store(app.extensions["dashboard_settings"].database_path)
+    store.upsert_node(id="remote-app-1", name="E-Commerce App", address="192.168.0.79",
+                      auth_token=hashlib.sha256(b"test-node-token").hexdigest())
+    headers = {"Authorization": "Bearer test-node-token"}
     heartbeat_payload = {
         "node_id": "remote-app-1",
         "name": "E-Commerce App",
@@ -266,9 +271,17 @@ def test_heartbeat_api_and_embed_data(app):
         "disk_total_gb": 100.0,
         "services": [{"name": "Shop", "url": "http://192.168.0.80:80", "status": "up"}],
     }
-    resp = client.post("/dashboard/api/nodes/heartbeat", json=heartbeat_payload)
+    assert client.post("/dashboard/api/nodes/heartbeat", json=heartbeat_payload).status_code == 401
+    assert client.post("/dashboard/api/nodes/heartbeat", json=heartbeat_payload,
+                       headers={"Authorization": "Bearer wrong"}).status_code == 401
+    resp = client.post("/dashboard/api/nodes/heartbeat", json=heartbeat_payload, headers=headers)
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
+    assert store.get_node("remote-app-1")["address"] == "192.168.0.80"
+    assert store.get_node("remote-app-1")["name"] == "E-Commerce App"
+    heartbeat_payload["node_id"] = "test-host-header"
+    assert client.post("/dashboard/api/nodes/heartbeat", json=heartbeat_payload, headers=headers).status_code == 401
+    assert store.get_node("test-host-header") is None
 
     # Public embed data endpoint (with CORS headers)
     embed_resp = client.get("/dashboard/api/embed/data")
@@ -323,3 +336,31 @@ def test_update_deletion_requires_csrf_fresh_auth_and_matching_confirmation(app)
     with client.session_transaction(path='/dashboard') as current:
         current['step_up_at'] = int(time.time())
     assert client.post('/dashboard/api/actions/delete_update', json=dict(selection, confirmation='wrong'), headers=headers).status_code == 400
+
+
+def test_stale_telemetry_is_unknown_instead_of_offline(tmp_path):
+    store = Store(tmp_path / "nodes.db")
+    store.initialize()
+    store.upsert_node(id="acer", name="Acer", address="10.60.0.30")
+    store.record_node_telemetry(node_id="acer", status="online")
+    with store.connect() as connection:
+        connection.execute("UPDATE node_telemetry SET timestamp='2000-01-01T00:00:00+00:00'")
+    node = next(n for n in store.list_nodes_with_telemetry() if n["id"] == "acer")
+    assert node["status"] == "unknown"
+    assert node["telemetry_stale"] is True
+
+
+def test_nodes_use_host_vitals_and_agent_download(app, monkeypatch):
+    import importlib
+    module = importlib.import_module("dashboard.app")
+    vitals = dict(hostname="msi", lan_ip="192.168.178.201", lan=dict(gateway="192.168.178.1", subnet="192.168.178.0/24"))
+    monkeypatch.setattr(module, "broker_call", lambda *a, **kw: vitals)
+    client, store = authenticated_client(app)
+    response = client.get("/dashboard/api/nodes")
+    assert response.status_code == 200
+    assert response.json["items"][0]["address"] == vitals["lan_ip"]
+    assert response.json["items"][0]["status"] == "online"
+    assert response.json["network"]["gateway"] == "192.168.178.1"
+    agent = client.get("/dashboard/static/eaf-node-agent.py")
+    assert agent.status_code == 200
+    assert b"--token-file" in agent.data

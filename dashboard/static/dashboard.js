@@ -79,6 +79,7 @@
                     const cls = ["finished", "valid", "online", "up"].includes(String(val).toLowerCase()) ? "status-pill ok" : "status-pill warn";
                     return `<td><span class="${cls}">${esc(val)}</span></td>`;
                   }
+                  if (key === "customer_country") return `<td>${esc(val || "Unknown")}</td>`;
                   return `<td>${esc(val)}</td>`;
                 }).join("")}
                 ${actions ? `<td>${actions.replaceAll("{id}", esc(item.id))}</td>` : ""}
@@ -261,12 +262,14 @@
 
     // Update topbar status
     if (topbarStatusText) {
-      const nodeCount = (data.nodes || []).length;
-      topbarStatusText.textContent = `Fleet: ${nodeCount} Node${nodeCount === 1 ? '' : 's'} Online`;
+      const total = (data.nodes || []).length;
+      const online = (data.nodes || []).filter(n => n.status === "online").length;
+      topbarStatusText.textContent = `Fleet: ${online}/${total} Nodes Online`;
     }
 
     // Host Vitals
     document.getElementById("vitals").innerHTML = renderVitals(data.vitals);
+    document.getElementById("host-vitals-label").textContent = `HOST SYSTEM VITALS · ${data.vitals?.hostname || "Origin"} (${data.vitals?.lan_ip || "Address unavailable"})`;
 
     // Application summary cards
     const finished = (data.payments || []).find((item) => item.status === "finished")?.count || 0;
@@ -327,8 +330,9 @@
     const data = await eafAuth.json("/dashboard/api/nodes");
     const items = data.items || [];
 
-    const originIp = "192.168.0.11";
-    const routerIp = "192.168.0.1";
+    const network = data.network || {};
+    const routerIp = network.gateway || "Gateway unavailable";
+    const dashboardUrl = window.location.origin;
 
     content.innerHTML = `
       <section>
@@ -343,27 +347,27 @@
         </div>
 
         <p class="section-note">
-          All servers are connected to the same local Ethernet router (<code>${routerIp}</code>).
+          All servers are connected to the same local Ethernet router (<code>${esc(routerIp)}</code>).
           The centralized MSI Origin server aggregates health, hosted websites, and metrics from each node.
         </p>
 
         <!-- Visual Network Topology -->
         <div class="topology-panel">
-          <div class="topology-title">Ethernet Router & Switch Network (192.168.0.0/24)</div>
+          <div class="topology-title">Ethernet Network (${esc(network.subnet || "Subnet unavailable")})</div>
           <div class="topology-graph">
             <div class="topo-node router-node">
               <span class="topo-icon">🌐</span>
-              <strong>Compal CH7485E Router</strong>
-              <small>${routerIp} (Gateway)</small>
+              <strong>${esc(network.router_name || "LAN router")}</strong>
+              <small>${esc(routerIp)} (Gateway)</small>
             </div>
             <div class="topo-cable"></div>
-            <div class="topo-hub">Gigabit Ethernet Interconnect</div>
+            <div class="topo-hub">Ethernet connection</div>
             <div class="topo-branches">
               ${items.map(n => `
                 <div class="topo-branch">
                   <div class="topo-cable-vert"></div>
                   <div class="topo-node ${n.role === 'gateway' ? 'origin-node' : 'child-node'}">
-                    <span class="dot ${n.status === 'online' ? 'ok' : 'bad'}"></span>
+                    <span class="dot ${n.status === 'online' ? 'ok' : n.status === 'offline' ? 'bad' : 'warn'}"></span>
                     <strong>${esc(n.name)}</strong>
                     <small>${esc(n.address)} · ${esc(pretty(n.role))}</small>
                   </div>
@@ -437,7 +441,7 @@
                 </div>
 
                 <footer class="node-footer">
-                  <small>Last seen: ${timeAgo(n.last_seen_seconds_ago)}</small>
+                  <small>${n.telemetry_stale ? "Telemetry stale · " : ""}Last seen: ${timeAgo(n.last_seen_seconds_ago)}</small>
                   <code>ID: ${esc(n.id)}</code>
                 </footer>
               </article>
@@ -453,12 +457,12 @@
             Run the turnkey Python agent on any other machine connected to the router. It gathers CPU, RAM, Disk, and local website health, pushing them to this dashboard every 15s.
           </p>
           <div class="code-box">
-            <pre><code># 1. Download and run test on your remote server (no pip packages needed):
-curl -s http://${originIp}:18010/dashboard/static/eaf-node-agent.py -o eaf-node-agent.py
-python3 eaf-node-agent.py --dashboard-url http://${originIp}:18010 --test
+            <pre><code># Register the node above and save its bearer token to a private file.
+# Download the agent on the remote server:
+curl -fsS ${esc(dashboardUrl)}/dashboard/static/eaf-node-agent.py -o eaf-node-agent.py
 
-# 2. Or install as a background systemd service:
-sudo python3 eaf-node-agent.py --install-systemd --dashboard-url http://${originIp}:18010 --name "Server 2" --probe-service "Blog=http://localhost:3000"</code></pre>
+# Install with the registered node ID and a root-readable token file:
+sudo python3 eaf-node-agent.py --install-systemd --dashboard-url ${esc(dashboardUrl)} --node-id YOUR_NODE_ID --token-file /etc/eaf-node-agent/token --name "Server 2" --probe-service "Blog=http://localhost:3000"</code></pre>
           </div>
         </div>
       </section>
@@ -479,10 +483,13 @@ sudo python3 eaf-node-agent.py --install-systemd --dashboard-url http://${origin
       const probe_url = document.getElementById("node-probe-input").value.trim() || null;
 
       try {
-        await eafAuth.json("/dashboard/api/nodes", {
+        const registered = await eafAuth.json("/dashboard/api/nodes", {
           method: "POST",
           body: JSON.stringify({ id: node_id, name, address, role, probe_url }),
         });
+        if (registered.bearer_token) {
+          prompt("Save this node token in a private file on the remote server. It is shown only once:", registered.bearer_token);
+        }
         modal.close();
         await nodesView();
       } catch (err) {
@@ -521,7 +528,6 @@ sudo python3 eaf-node-agent.py --install-systemd --dashboard-url http://${origin
 
   async function embedView() {
     const originUrl = window.location.origin;
-    const lanUrl = "http://192.168.0.11:18010";
 
     content.innerHTML = `
       <section>
@@ -553,7 +559,6 @@ sudo python3 eaf-node-agent.py --install-systemd --dashboard-url http://${origin
               <label for="widget-source-select">Connection Source</label>
               <select id="widget-source-select">
                 <option value="${originUrl}" selected>Public HTTPS (${originUrl})</option>
-                <option value="${lanUrl}">LAN Gigabit Ethernet (${lanUrl})</option>
               </select>
             </div>
 

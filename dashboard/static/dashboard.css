@@ -264,6 +264,7 @@ button:hover, .nav:hover, .nav.active {
   background: var(--muted);
 }
 .dot.ok { background: var(--green); box-shadow: 0 0 10px var(--green-glow); }
+.dot.warn { background: var(--yellow); }
 .dot.bad { background: var(--red); box-shadow: 0 0 10px rgba(255, 107, 125, 0.4); }
 
 /* TOPOLOGY PANEL */

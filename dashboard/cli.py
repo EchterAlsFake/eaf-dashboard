@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import hashlib
+import secrets
 import os
 
 from .auth import PASSWORD_HASHER
@@ -12,14 +14,24 @@ from .store import Store
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Manage the local dashboard administrator")
-    parser.add_argument("command", choices=("initialize", "enroll", "reset", "metrics"))
+    parser.add_argument("command", choices=("initialize", "enroll", "reset", "metrics", "node-token"))
+    parser.add_argument("--node-id")
     args = parser.parse_args()
     # The metrics importer only needs the data directory and broker socket. The
     # dashboard secret is injected into Gunicorn by the entrypoint and is
     # intentionally unavailable to unrelated `podman exec` processes.
-    settings = Settings.load(require_secret=args.command != "metrics")
+    settings = Settings.load(require_secret=args.command not in {"metrics", "node-token"})
     store = Store(settings.database_path)
     store.initialize()
+    if args.command == "node-token":
+        if not args.node_id or args.node_id == "node-origin" or not store.get_node(args.node_id):
+            parser.error("Provide an existing remote --node-id")
+        token = secrets.token_urlsafe(32)
+        with store.connect() as connection:
+            connection.execute("UPDATE node SET auth_token=? WHERE id=?",
+                               (hashlib.sha256(token.encode()).hexdigest(), args.node_id))
+        print(token)
+        return 0
     if args.command == "metrics":
         for item in broker_call(settings.broker_socket, "caddy_metrics"):
             store.record_counter_delta(item["series"], item["host"], item["value"])

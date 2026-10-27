@@ -101,3 +101,15 @@ Please do not publish a suspected vulnerability or production detail in a public
 issue. Use GitHub's private vulnerability reporting for this repository. Do not
 send tokens, database copies, passkey material, personal records, or live error
 reports with a report.
+
+
+### Network inventory and payment countries
+
+The LAN view uses the host broker's current IPv4 route instead of fixed router or
+MSI addresses. Remote telemetry expires after 120 seconds and then shows unknown,
+with its last-seen age. Agents must be registered and use individual bearer tokens;
+see [the agent setup guide](MULTI-SERVER-FEDERATION.md).
+
+The authenticated Payments table includes `customer_country` from the checkout's
+existing transaction record. No new IP collection or external country lookup is
+performed. This is the checkout country, not necessarily the bank/card country.

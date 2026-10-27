@@ -151,7 +151,7 @@ class Store:
                 now = utc_now().isoformat()
                 connection.execute(
                     "INSERT INTO node(id,name,address,role,is_active,auto_probe,probe_url,created_at,updated_at) "
-                    "VALUES('node-origin','MSI Stealth 15M (Origin Gateway)','192.168.0.11','gateway',1,1,'http://127.0.0.1:18010/dashboard/healthz',?,?)",
+                    "VALUES('node-origin','MSI Stealth 15M (Origin Gateway)','unknown','gateway',1,0,'http://127.0.0.1:18010/dashboard/healthz',?,?)",
                     (now, now),
                 )
 
@@ -499,12 +499,17 @@ class Store:
                 item["status"] = telemetry.get("status", "online")
                 try:
                     last_seen = datetime.fromisoformat(telemetry["timestamp"])
+                    if last_seen.tzinfo is None:
+                        last_seen = last_seen.replace(tzinfo=UTC)
                     age_seconds = (now - last_seen).total_seconds()
                     item["last_seen_seconds_ago"] = int(age_seconds)
-                    if age_seconds > 120 and item["status"] == "online" and node["id"] != "node-origin":
-                        item["status"] = "offline"
+                    item["telemetry_stale"] = age_seconds > 120
+                    if item["telemetry_stale"]:
+                        item["status"] = "unknown"
                 except Exception:
                     item["last_seen_seconds_ago"] = None
+                    item["telemetry_stale"] = True
+                    item["status"] = "unknown"
             else:
                 item["telemetry"] = None
                 item["status"] = "unknown"

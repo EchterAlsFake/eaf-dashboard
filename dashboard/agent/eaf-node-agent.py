@@ -6,9 +6,9 @@ LAN router or remote networks. Collects host resource vitals (CPU, RAM, Disk, Up
 and probes local websites/services, reporting them to the centralized EAF Dashboard.
 
 Usage:
-  python3 eaf-node-agent.py --dashboard-url http://192.168.0.11:18010
+  python3 eaf-node-agent.py --dashboard-url https://YOUR_DASHBOARD_HOST
   python3 eaf-node-agent.py --test
-  sudo python3 eaf-node-agent.py --install-systemd --dashboard-url http://192.168.0.11:18010
+  sudo python3 eaf-node-agent.py --install-systemd --dashboard-url https://YOUR_DASHBOARD_HOST
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ import http.server
 import json
 import os
 import shutil
+import subprocess
+from pathlib import Path
 import socket
 import sys
 import threading
@@ -28,17 +30,18 @@ from typing import Any
 
 
 def detect_lan_ip() -> str:
-    """Detect the local LAN IPv4 address on the Ethernet / router interface."""
+    """Use the physical default route; do not assume a router or subnet."""
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            # Connect to a dummy LAN router address to identify outbound interface
-            s.connect(("192.168.0.1", 80))
-            return s.getsockname()[0]
-    except OSError:
-        pass
-    try:
-        return socket.gethostbyname(socket.gethostname())
-    except OSError:
+        routes = json.loads(subprocess.run(
+            ["ip", "-j", "-4", "route", "show", "default"],
+            check=True, capture_output=True, text=True, timeout=3).stdout)
+        routes = [r for r in routes if r.get("gateway") and r.get("dev")
+                  and not r["dev"].startswith(("wg", "tun", "tap", "podman", "veth"))]
+        route = min(routes, key=lambda r: r.get("metric", 0))
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
+            connection.connect((route["gateway"], 80))
+            return connection.getsockname()[0]
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         return "127.0.0.1"
 
 
@@ -172,6 +175,7 @@ class NodeAgent:
                     self.services_to_probe.append({"name": item.strip(), "url": item.strip()})
 
     def build_payload(self) -> dict[str, Any]:
+        self.address = self.config.address or detect_lan_ip()
         vitals = collect_vitals()
         probed_services = [check_service(s["url"], s["name"]) for s in self.services_to_probe]
         overall_status = "online"
@@ -191,12 +195,19 @@ class NodeAgent:
 
     def send_heartbeat(self) -> bool:
         payload = self.build_payload()
+        token_file = getattr(self.config, "token_file", None)
+        if not token_file:
+            raise RuntimeError("A provisioned node --token-file is required")
+        token = Path(token_file).read_text().strip()
+        if not token:
+            raise RuntimeError("The node token file is empty")
         encoded = json.dumps(payload).encode("utf-8")
         target_url = f"{self.dashboard_url}/dashboard/api/nodes/heartbeat"
         req = urllib.request.Request(
             target_url,
             data=encoded,
             headers={
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
                 "User-Agent": "EAF-Node-Agent/1.0",
             },
@@ -247,15 +258,22 @@ def install_systemd_service(config: argparse.Namespace) -> None:
     shutil.copy2(script_path, target_script)
     os.chmod(target_script, 0o755)
 
-    args = [f"--dashboard-url {config.dashboard_url}"]
+    if not config.token_file:
+        raise RuntimeError("--token-file is required for installation")
+    # Quote for systemd ExecStart, which does not interpret shell single quotes.
+    def quote(value):
+        return json.dumps(str(value).replace("%", "%%"), ensure_ascii=False)
+    args = ["--dashboard-url", quote(config.dashboard_url), "--token-file", quote(config.token_file)]
+    for option in ("node_id", "address", "interval"):
+        if getattr(config, option, None):
+            args.extend(["--" + option.replace("_", "-"), quote(getattr(config, option))])
     if config.name:
-        args.append(f"--name '{config.name}'")
+        args.extend(["--name", quote(config.name)])
     if config.role:
-        args.append(f"--role '{config.role}'")
-    if config.serve_port:
-        args.append(f"--serve-port {config.serve_port}")
+        args.extend(["--role", quote(config.role)])
+    args.extend(["--serve-port", quote(config.serve_port)])
     for s in config.probe_service or []:
-        args.append(f"--probe-service '{s}'")
+        args.extend(["--probe-service", quote(s)])
 
     unit_content = f"""[Unit]
 Description=EAF Multi-Server Telemetry Agent
@@ -287,9 +305,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="EAF Multi-Server Telemetry Agent")
     parser.add_argument(
         "--dashboard-url",
-        default=os.environ.get("EAF_DASHBOARD_URL", "http://192.168.0.11:18010"),
-        help="Base URL of central EAF dashboard (default: http://192.168.0.11:18010)",
+        default=os.environ.get("EAF_DASHBOARD_URL"),
+        help="Base URL of central EAF dashboard (required unless --test)",
     )
+    parser.add_argument("--token-file", default=os.environ.get("EAF_NODE_TOKEN_FILE"), help="Path to a private file containing the provisioned bearer token")
     parser.add_argument("--node-id", default=os.environ.get("EAF_NODE_ID"), help="Unique node identifier")
     parser.add_argument("--name", default=os.environ.get("EAF_NODE_NAME"), help="Human-readable server name")
     parser.add_argument("--address", default=os.environ.get("EAF_NODE_ADDRESS"), help="LAN IP address")
@@ -305,6 +324,11 @@ def main() -> int:
     parser.add_argument("--install-systemd", action="store_true", help="Install as systemd service and start")
 
     args = parser.parse_args()
+
+    if not args.dashboard_url:
+        if not args.test:
+            parser.error("--dashboard-url is required")
+        args.dashboard_url = "http://localhost"
 
     if args.install_systemd:
         install_systemd_service(args)

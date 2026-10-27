@@ -1,20 +1,20 @@
 # Multi-Server Federation & Embedding Guide
 
-This guide details how to connect multiple web servers and websites running on the same local network (router + Ethernet on `192.168.0.0/24`) to the central EAF Dashboard, and how to embed live status and metrics into external websites.
+This guide details how to connect multiple web servers and websites running on the same local network (router + Ethernet on `192.168.178.0/24`) to the central EAF Dashboard, and how to embed live status and metrics into external websites.
 
 ---
 
 ## 1. Architecture Overview
 
 ```
-                         Router (192.168.0.1)
+                         Router (192.168.178.1)
                                   │
          ┌────────────────────────┼────────────────────────┐
          │ (Ethernet)             │ (Ethernet)             │ (Ethernet)
          ▼                        ▼                        ▼
 ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
 │ Central Server   │    │ Node Server 1    │    │ Node Server 2    │
-│ (192.168.0.11)   │    │ (192.168.0.x)    │    │ (192.168.0.y)    │
+│ (192.168.178.201)   │    │ (192.168.178.x)    │    │ (192.168.178.y)    │
 │                  │    │                  │    │                  │
 │ • EAF Dashboard  │◄───┤ • eaf-node-agent │◄───┤ • eaf-node-agent │
 │   (:18010)       │    │ • Web App A      │    │ • Web App B      │
@@ -33,7 +33,7 @@ This guide details how to connect multiple web servers and websites running on t
 ```
 
 The system operates across three tiers:
-1. **Central Aggregator (Dashboard)**: Runs at `http://192.168.0.11:18010` (or your edge domain). Stores node definitions, historical and latest telemetry, and hosts the embed engine.
+1. **Central Aggregator (Dashboard)**: Runs at `https://pornfetch.to` (or your edge domain). Stores node definitions, historical and latest telemetry, and hosts the embed engine.
 2. **Node Agent (`eaf-node-agent.py`)**: A zero-dependency Python 3 daemon deployed to each connected server. Collects host resource vitals (CPU, RAM, load, disk, uptime) and probes local web services, then pushes heartbeats to the central dashboard.
 3. **Embed Engine**: Exposes CORS-enabled JSON endpoints, a Shadow DOM Web Component (`<eaf-widget>`), and iframe templates to embed status into any other website seamlessly.
 
@@ -41,25 +41,26 @@ The system operates across three tiers:
 
 ## 2. Deploying Node Agents
 
-Each server on the network runs the lightweight telemetry agent `eaf-node-agent.py`. It requires only Python 3.8+ and no third-party libraries (`requests`, etc. are NOT needed; it uses the standard library `urllib` and `http.server`).
+Each server on the network runs the lightweight telemetry agent `eaf-node-agent.py`. It requires only Python 3.10+ and no third-party libraries (`requests`, etc. are NOT needed; it uses the standard library `urllib` and `http.server`).
 
 ### Quick Setup on a New Server
 
 1. **Copy the agent script to the target server**:
    ```bash
-   scp /home/asuna/staging/eaf-node-agent.py user@192.168.0.x:/usr/local/bin/eaf-node-agent
-   chmod +x /usr/local/bin/eaf-node-agent
+   curl -fsS https://pornfetch.to/dashboard/static/eaf-node-agent.py -o eaf-node-agent.py
    ```
 
 2. **Test metrics collection locally**:
    ```bash
-   /usr/local/bin/eaf-node-agent --test
+   python3 eaf-node-agent.py --test
    ```
 
 3. **Install and run as a systemd service**:
    ```bash
-   sudo /usr/local/bin/eaf-node-agent \
-     --dashboard-url http://192.168.0.11:18010 \
+   sudo python3 eaf-node-agent.py \
+     --dashboard-url https://pornfetch.to \
+     --node-id YOUR_REGISTERED_NODE_ID \
+     --token-file /etc/eaf-node-agent/token \
      --name "Media & Storage Server" \
      --role "storage" \
      --probe-service "Jellyfin=http://localhost:8096/health" \
@@ -73,7 +74,8 @@ This automatically generates `/etc/systemd/system/eaf-node-agent.service`, reloa
 
 | Flag | Default | Description |
 |---|---|---|
-| `--dashboard-url` | `http://192.168.0.11:18010` | Central EAF Dashboard base URL |
+| `--dashboard-url` | Required | Central EAF Dashboard base URL |
+| `--token-file` | Required for sending | Private file containing the provisioned bearer token |
 | `--node-id` | `node-<hostname>` | Unique identifier for this node |
 | `--name` | `<hostname>` | Friendly name displayed in the UI |
 | `--address` | Auto-detected LAN IP | LAN IP address reachable by the central host |
@@ -88,26 +90,37 @@ This automatically generates `/etc/systemd/system/eaf-node-agent.service`, reloa
 
 ## 3. Registering Nodes in the Dashboard
 
-Nodes can be connected in two ways:
+Register a node in the authenticated **LAN Fleet & Servers** tab before installing its agent.
+Save the one-time bearer token in `/etc/eaf-node-agent/token` on that node, with mode
+`0600` and a directory accessible only to root. Heartbeats require this token;
+unknown nodes and unauthenticated updates are rejected. Only the token hash is
+stored in the dashboard database. Authenticated agents refresh their LAN address
+after DHCP changes; they cannot register additional nodes or rename existing ones.
 
-### Automatic Discovery via Heartbeat (Push Mode)
-When `eaf-node-agent` sends its first heartbeat to `POST /dashboard/api/nodes/heartbeat`, the dashboard automatically upserts the node record and marks it online. No prior manual registration is required.
-
-### Manual Registration via UI or API (Pull/Inventory Mode)
-You can register nodes in advance from the **LAN Fleet & Servers** tab in the dashboard by clicking **"Register Node"**, or via the API:
+For an existing node, generate or rotate its token locally on MSI:
 
 ```bash
-curl -X POST http://192.168.0.11:18010/dashboard/api/nodes \
-  -H "Content-Type: application/json" \
-  -H "X-CSRF-Token: <SESSION_CSRF_TOKEN>" \
-  -d '{
-    "node_id": "node-pi-dns",
-    "name": "Raspberry Pi DNS",
-    "address": "192.168.0.15",
-    "role": "dns",
-    "telemetry_url": "http://192.168.0.15:9100/health"
-  }'
+sudo runuser -u pornfetch -- env XDG_RUNTIME_DIR=/run/user/1001 \
+  podman exec --user 1000:1000 eaf-dashboard \
+  python -m dashboard.cli node-token --node-id node-eaf-node
 ```
+
+This prints a new secret once and invalidates the previous token. Transfer it over
+an authenticated channel to the agent's private token file. Do not commit it.
+Restart the agent after updating its script and systemd configuration.
+
+The production dashboard is published on **loopback only** at `127.0.0.1:18010`.
+Agents and embeds use `https://pornfetch.to`, not an exposed LAN port.
+The host broker reads the current physical IPv4 default route for MSI's address,
+LAN subnet and router. Configure the router label with `EAF_BROKER_ROUTER_NAME`.
+Telemetry older than 120 seconds is marked **unknown / stale**. It does not prove
+that the server is offline; check its agent and connectivity.
+
+On 2026-10-27, MSI is `192.168.178.201`, the FRITZ!Box is `192.168.178.1`,
+and router DNS resolves Acer (`eaf-node.fritz.box`) to `192.168.178.200`.
+Three legacy test registrations (`test`, `node-acer`, `test-host-header`) were
+removed after a database backup. The real Acer record is `node-eaf-node`.
+Acer agent repair was deferred by the operator; its last heartbeat was on October 22.
 
 ---
 
@@ -121,7 +134,7 @@ Include the `embed.js` script and place `<eaf-widget>` tags anywhere in your HTM
 
 ```html
 <!-- 1. Include the embed library once in your page -->
-<script src="http://192.168.0.11:18010/dashboard/static/embed.js" defer></script>
+<script src="https://pornfetch.to/dashboard/static/embed.js" defer></script>
 
 <!-- 2. Embed a compact status badge -->
 <eaf-widget mode="badge" theme="dark"></eaf-widget>
@@ -142,7 +155,7 @@ Include the `embed.js` script and place `<eaf-widget>` tags anywhere in your HTM
 |---|---|---|---|
 | `mode` | `badge`, `card`, `services`, `fleet` | `card` | Display variant |
 | `theme` | `dark`, `light` | `dark` | Color scheme |
-| `src` | URL | (Current origin) | Base URL of dashboard (e.g. `http://192.168.0.11:18010`) |
+| `src` | URL | (Current origin) | Base URL of dashboard (e.g. `https://pornfetch.to`) |
 | `refresh` | Number (seconds) | `20` | Auto-refresh interval (set `0` to disable) |
 
 ---
@@ -153,7 +166,7 @@ For zero-JavaScript or CMS environments (WordPress, Notion, static markdown site
 
 ```html
 <iframe
-  src="http://192.168.0.11:18010/dashboard/embed/view?widget=card&theme=dark"
+  src="https://pornfetch.to/dashboard/embed/view?widget=card&theme=dark"
   width="100%"
   height="240"
   frameborder="0"
@@ -173,7 +186,7 @@ Supported query parameters:
 External frontends (Vue, React, Svelte, static site generators) can fetch live cluster metrics directly. The endpoints include `Access-Control-Allow-Origin: *` headers for direct client-side querying.
 
 #### 1. Public Cluster Overview
-`GET http://192.168.0.11:18010/dashboard/api/embed/data`
+`GET https://pornfetch.to/dashboard/api/embed/data`
 
 ```json
 {
@@ -210,7 +223,7 @@ External frontends (Vue, React, Svelte, static site generators) can fetch live c
 ```
 
 #### 2. Detailed Multi-Node Telemetry
-`GET http://192.168.0.11:18010/dashboard/api/embed/nodes`
+`GET https://pornfetch.to/dashboard/api/embed/nodes`
 
 Returns the complete array of registered nodes with individual CPU, memory, load, and probed sub-services.
 
@@ -221,7 +234,7 @@ Returns the complete array of registered nodes with individual CPU, memory, load
 1. **Firewall Boundary**:
    The central host runs `nftables` with a default input DROP policy. LAN access on port 18010 is explicitly restricted to the local subnet:
    ```nftables
-   iifname "enp0s20f0u3c2" ip saddr 192.168.0.0/24 tcp dport 18010 accept
+   iifname "enp0s20f0u3c2" ip saddr 192.168.178.0/24 tcp dport 18010 accept
    ```
    No unauthenticated LAN traffic can reach internal broker sockets or unapproved ports.
 

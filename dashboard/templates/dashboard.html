@@ -64,7 +64,7 @@
       </div>
 
       <!-- Host Hardware & Resource Vitals Bar -->
-      <div class="section-label">HOST SYSTEM VITALS · MSI STEALTH 15M (192.168.0.11)</div>
+      <div id="host-vitals-label" class="section-label">HOST SYSTEM VITALS</div>
       <div id="vitals" class="vitals-grid"></div>
 
       <!-- Application Core Metrics Summary -->
@@ -95,7 +95,7 @@
         <button type="button" class="close-btn" id="close-modal">&times;</button>
       </div>
       <p class="modal-desc">
-        Connect another server running on the same router + Ethernet (<code class="lan-code">192.168.0.x</code>) to aggregate telemetry, monitor hosted websites, and embed widgets.
+        Connect another server running on the same router + Ethernet using its current LAN address to aggregate telemetry, monitor hosted websites, and embed widgets.
       </p>
       <div class="form-group">
         <label for="node-id-input">Unique Node ID</label>
@@ -107,7 +107,7 @@
       </div>
       <div class="form-group">
         <label for="node-address-input">LAN Ethernet IP Address</label>
-        <input id="node-address-input" placeholder="e.g. 192.168.0.45" required>
+        <input id="node-address-input" placeholder="e.g. 192.168.178.100" required>
       </div>
       <div class="form-group">
         <label for="node-role-input">Server Role</label>
@@ -121,7 +121,7 @@
       </div>
       <div class="form-group">
         <label for="node-probe-input">Health Check URL (Optional)</label>
-        <input id="node-probe-input" placeholder="e.g. http://192.168.0.45:9100/health or http://192.168.0.45:3000/api/health">
+        <input id="node-probe-input" placeholder="e.g. http://192.168.178.100:9100/health or http://192.168.178.100:3000/api/health">
       </div>
       <div class="modal-footer">
         <button type="button" id="cancel-node" class="btn-secondary">Cancel</button>

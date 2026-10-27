@@ -4,10 +4,11 @@ import hashlib
 import hmac
 import ipaddress
 import secrets
+from pathlib import Path
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
-from flask import Flask, abort, jsonify, render_template, request, session
+from flask import Flask, abort, jsonify, render_template, request, session, send_from_directory
 
 from .auth import install_auth, require_step_up
 from .broker_client import BrokerError, call as broker_call
@@ -193,6 +194,33 @@ def create_app(settings: Settings | None = None) -> Flask:
         except BrokerError:
             return jsonify(error="selection_unavailable_or_referenced_by_signed_metadata"), 400
 
+    @app.get("/dashboard/static/eaf-node-agent.py")
+    def download_node_agent():
+        return send_from_directory(Path(__file__).parent / "agent", "eaf-node-agent.py", mimetype="text/plain")
+
+    def fleet_nodes(vitals=None):
+        nodes = store.list_nodes_with_telemetry()
+        if vitals is None:
+            try:
+                vitals = broker_call(active.broker_socket, "system_vitals")
+            except BrokerError:
+                vitals = {}
+        for node in nodes:
+            if node["id"] == "node-origin":
+                node["address"] = vitals.get("lan_ip") or "unknown"
+                node["status"] = "online" if vitals.get("hostname") else "unknown"
+                node["telemetry_stale"] = False
+                node["last_seen_seconds_ago"] = 0 if vitals else None
+                if vitals:
+                    node["telemetry"] = dict(
+                        cpu_percent=vitals.get("cpu", {}).get("percent"),
+                        memory_used_mb=vitals.get("memory", {}).get("used_mb"),
+                        memory_total_mb=vitals.get("memory", {}).get("total_mb"),
+                        disk_used_gb=vitals.get("disk", {}).get("used_gb"),
+                        disk_total_gb=vitals.get("disk", {}).get("total_gb"),
+                        uptime_seconds=vitals.get("uptime_seconds"), services=[])
+        return nodes
+
     @app.get("/dashboard/api/overview")
     @require_auth
     def overview():
@@ -203,7 +231,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             snapshot = {"error": "data_source_unavailable", "services": []}
         snapshot["usage"] = store.usage(30)
         snapshot["security"] = store.security_summary(24)
-        snapshot["nodes"] = store.list_nodes_with_telemetry()
+        snapshot["nodes"] = fleet_nodes(snapshot.get("vitals", {}))
         try:
             snapshot["lan_devices"] = broker_call(active.broker_socket, "scan_lan")
         except Exception:
@@ -213,7 +241,11 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.get("/dashboard/api/nodes")
     @require_auth
     def get_nodes():
-        return jsonify({"items": store.list_nodes_with_telemetry()})
+        try:
+            vitals = broker_call(active.broker_socket, "system_vitals")
+        except BrokerError:
+            vitals = {}
+        return jsonify({"items": fleet_nodes(vitals), "network": vitals.get("lan", {})})
 
     @app.post("/dashboard/api/nodes")
     @require_auth
@@ -231,15 +263,18 @@ def create_app(settings: Settings | None = None) -> Flask:
         role = str(payload.get("role") or "server").strip()
         probe_url = str(payload.get("probe_url") or "").strip() or None
         auto_probe = bool(payload.get("auto_probe", True))
+        bearer_token = secrets.token_urlsafe(32) if not store.get_node(node_id) else None
         node = store.upsert_node(
             id=node_id,
+            auth_token=hashlib.sha256(bearer_token.encode()).hexdigest() if bearer_token else None,
             name=name,
             address=address,
             role=role,
             probe_url=probe_url,
             auto_probe=auto_probe,
         )
-        return jsonify({"ok": True, "node": node}), 201
+        node.pop("auth_token", None)
+        return jsonify({"ok": True, "node": node, "bearer_token": bearer_token}), 201
 
     @app.post("/dashboard/api/nodes/<node_id>/probe")
     @require_auth
@@ -277,13 +312,26 @@ def create_app(settings: Settings | None = None) -> Flask:
         if not node_id:
             return jsonify({"error": "node_id is required"}), 400
         existing = store.get_node(node_id)
-        address = str(payload.get("address") or request.remote_addr or "unknown")
-        name = str(payload.get("name") or node_id)
-        role = str(payload.get("role") or "server")
-        if not existing:
-            store.upsert_node(id=node_id, name=name, address=address, role=role)
+        authorization = request.headers.get("Authorization", "")
+        token = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        if (not existing or node_id == "node-origin" or not existing.get("is_active")
+                or not token or not existing.get("auth_token")
+                or not secrets.compare_digest(existing["auth_token"], digest)):
+            return jsonify({"error": "invalid_node_credentials"}), 401
+        address = str(payload.get("address") or "").strip()
+        try:
+            ipaddress.ip_address(address)
+        except ValueError:
+            return jsonify({"error": "valid node address required"}), 400
+        # Authenticated agents can refresh their address after DHCP changes.
+        with store.connect() as connection:
+            connection.execute("UPDATE node SET address=?, updated_at=? WHERE id=?",
+                               (address, datetime.now(UTC).isoformat(), node_id))
 
         status = str(payload.get("status") or "online")
+        if status not in {"online", "degraded", "offline"}:
+            return jsonify({"error": "invalid node status"}), 400
         cpu_percent = payload.get("cpu_percent")
         memory_used_mb = payload.get("memory_used_mb")
         memory_total_mb = payload.get("memory_total_mb")
@@ -323,7 +371,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         except Exception:
             vitals = {}
 
-        nodes = store.list_nodes_with_telemetry()
+        nodes = fleet_nodes(vitals)
         total_nodes = len(nodes)
         online_nodes = sum(1 for n in nodes if n.get("status") == "online")
 
@@ -366,7 +414,7 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     @app.get("/dashboard/api/embed/nodes")
     def embed_nodes():
-        nodes = store.list_nodes_with_telemetry()
+        nodes = fleet_nodes()
         resp = jsonify({"items": nodes})
         resp.headers["Access-Control-Allow-Origin"] = "*"
         resp.headers["Cache-Control"] = "public, max-age=10"
