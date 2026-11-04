@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import ipaddress
 import secrets
 from pathlib import Path
 from datetime import UTC, datetime
@@ -12,6 +11,7 @@ from flask import Flask, abort, jsonify, render_template, request, session, send
 
 from .auth import install_auth, require_step_up
 from .broker_client import BrokerError, call as broker_call
+from .client_address import client_address
 from .config import Settings
 from .store import Store
 
@@ -528,13 +528,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             or request.headers.get("Origin", "") != f"https://{host}"
         ):
             abort(404)
-        address = request.remote_addr or "unknown"
-        if address in {"127.0.0.1", "::1"}:
-            forwarded = request.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
-            try:
-                address = str(ipaddress.ip_address(forwarded))
-            except ValueError:
-                pass
+        address = client_address(active.trusted_proxies)
         day = datetime.now(UTC).date().isoformat()
         daily_key = hmac.new(
             active.secret_key.encode(), f"visit\0{day}\0{address}".encode(), hashlib.sha256

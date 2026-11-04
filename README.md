@@ -64,6 +64,14 @@ receives only the fields needed for the selected dashboard view. Anyone adapting
 the project should review those fields against their own privacy policy before
 connecting a data source.
 
+Behind a container port forward, configure `EAF_DASHBOARD_TRUSTED_PROXIES`
+with a comma-separated list of exact proxy addresses/CIDRs. Only loopback is
+trusted by default. Caddy must replace `X-Forwarded-For` with one authenticated
+client address. The production dashboard has the fixed container address
+`10.89.10.10`; rootless port forwarding presents that address as its peer.
+The same identity resolver is used for visits and login rate limits. Other
+container peers cannot supply trusted forwarded addresses.
+
 ## Authentication model
 
 Interactive access requires a local Argon2id password followed by WebAuthn.

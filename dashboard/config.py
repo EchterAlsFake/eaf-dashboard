@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import ipaddress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,7 @@ class Settings:
     origin: str
     broker_socket: Path
     secure_cookie: bool
+    trusted_proxies: tuple[str, ...] = ("127.0.0.1/32", "::1/128")
 
     @classmethod
     def load(cls, *, require_secret: bool = True) -> "Settings":
@@ -28,7 +30,14 @@ class Settings:
         origin = os.environ.get(
             "EAF_DASHBOARD_ORIGIN", "https://echteralsfake.me"
         ).strip().rstrip("/")
+        trusted_proxies = tuple(
+            str(ipaddress.ip_network(value.strip(), strict=True))
+            for value in os.environ.get(
+                "EAF_DASHBOARD_TRUSTED_PROXIES", "127.0.0.1/32,::1/128"
+            ).split(",") if value.strip()
+        )
         return cls(
+            trusted_proxies=trusted_proxies,
             data_dir=data_dir,
             database_path=data_dir / "dashboard.db",
             secret_key=secret_key,

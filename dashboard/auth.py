@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import ipaddress
 import json
 import secrets
 import threading
@@ -27,6 +26,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+from .client_address import client_address
 from .store import Store, utc_now
 
 
@@ -34,19 +34,14 @@ PASSWORD_HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4)
 
 
 class LoginLimiter:
-    def __init__(self, secret: str):
+    def __init__(self, secret: str, trusted_proxies=("127.0.0.1/32", "::1/128")):
         self.secret = secret.encode()
+        self.trusted_proxies = trusted_proxies
         self.entries: dict[str, tuple[int, float, float]] = {}
         self.lock = threading.Lock()
 
     def _keys(self) -> tuple[str, str]:
-        address = request.remote_addr or "unknown"
-        if address in {"127.0.0.1", "::1"}:
-            candidate = request.headers.get("X-Forwarded-For", "").split(",", 1)[0].strip()
-            try:
-                address = str(ipaddress.ip_address(candidate))
-            except ValueError:
-                pass
+        address = client_address(self.trusted_proxies)
         hour = int(time.time() // 3600)
         client = hmac.new(
             self.secret, f"client:{hour}:{address}".encode(), hashlib.sha256
@@ -97,7 +92,7 @@ def encode_options(options) -> dict:
 
 
 def install_auth(app, store: Store, settings) -> None:
-    limiter = LoginLimiter(settings.secret_key)
+    limiter = LoginLimiter(settings.secret_key, settings.trusted_proxies)
 
     def json_object() -> dict:
         if not request.is_json:
