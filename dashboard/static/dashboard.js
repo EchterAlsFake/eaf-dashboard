@@ -645,6 +645,31 @@ fetch("${originUrl}/dashboard/api/embed/data")
     updatePlayground();
   }
 
+  let analyticsWeeks = 4;
+  async function websiteAnalytics() {
+    const data = await eafAuth.json(`/dashboard/api/analytics?weeks=${analyticsWeeks}`);
+    const views = new Map(data.rows.filter(row => row.action === 'pageview').map(row => [`${row.week}:${row.page}`, row.count]));
+    const rows = data.rows.map(row => ({
+      week_start_utc: row.week, page: row.page, action: pretty(row.action), events: row.count,
+      clicks_per_100_displays: row.action !== 'pageview' && views.has(`${row.week}:${row.page}`)
+        ? (100 * row.count / views.get(`${row.week}:${row.page}`)).toFixed(1) : '—',
+    }));
+    content.innerHTML = `<section>
+      <div class="section-head"><div><p class="eyebrow">AGGREGATE COUNTS</p><h2>Website analytics</h2></div>
+        <label>Completed weeks <select id="analytics-weeks">${[4, 8, 12, 26, 52].map(weeks => `<option value="${weeks}" ${weeks === analyticsWeeks ? 'selected' : ''}>${weeks}</option>`).join('')}</select></label></div>
+      <p>${data.enabled ? 'Collection enabled' : 'Collection disabled'} · Updated ${esc(data.updated_day)} · UTC</p>
+      ${data.stale ? '<p class="empty">The report is out of date. Displayed counts may not cover the latest completed week.</p>' : ''}
+      <p>${esc(data.start)} through ${esc(data.end_exclusive)} (end exclusive). Only completed Monday–Sunday weeks are shown. Counts below 20 are omitted; missing rows mean unreported activity, not zero.</p>
+      <p>These counts measure page displays and actions, including repeat clicks. They do not identify people or connect visits to purchases. Clicks per 100 displays compare actions on the same page and week; they are not user conversion or abandonment rates. Downloads count clicks, not completed downloads or installations.</p>
+      ${rows.length ? table(rows, '', 'analytics-search') : '<p class="empty">No reportable activity yet. Results appear after a week completes and a page/action reaches 20 events. Earlier browsing history cannot be reconstructed.</p>'}
+    </section>`;
+    attachTableSearch('analytics-search');
+    document.getElementById('analytics-weeks').addEventListener('change', event => {
+      analyticsWeeks = Number(event.target.value);
+      websiteAnalytics().catch(showError);
+    });
+  }
+
   async function traffic(range = 30) {
     const data = await eafAuth.json(`/dashboard/api/usage?days=${range}`);
     content.innerHTML = `
@@ -794,6 +819,7 @@ fetch("${originUrl}/dashboard/api/embed/data")
     nodes: nodesView,
     embed: embedView,
     traffic,
+    analytics: websiteAnalytics,
     revenue,
   };
 
@@ -833,5 +859,5 @@ fetch("${originUrl}/dashboard/api/embed/data")
     setupRefresh();
   }
 
-  switchView(location.pathname === "/dashboard/updates" ? "updates" : "overview");
+  switchView(location.pathname === "/dashboard/updates" ? "updates" : location.pathname === "/dashboard/analytics" ? "analytics" : "overview");
 })();

@@ -121,3 +121,15 @@ see [the agent setup guide](MULTI-SERVER-FEDERATION.md).
 The authenticated Payments table includes `customer_country` from the checkout's
 existing transaction record. No new IP collection or external country lookup is
 performed. This is the checkout country, not necessarily the bank/card country.
+
+### Website analytics
+
+The **Website analytics** tab (`/dashboard/analytics`) displays authenticated,
+completed-week page and action counts supplied by the `website_analytics` broker
+operation. The source is the website's suppressed aggregate export, never raw
+visitor records or customer data. Counts below twenty and the current week are
+excluded. Page action ratios count events, not distinct visitors or connected
+conversion funnels. Period selection persists during automatic refresh. The view
+shows collection status, snapshot age, and a distinct source-unavailable error.
+Broker/exporter deployment instructions are versioned in the Server repository's
+`docs/ANALYTICS.md` and `deploy/dashboard-analytics/` directory.

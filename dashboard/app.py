@@ -428,6 +428,25 @@ def create_app(settings: Settings | None = None) -> Flask:
         node_id = request.args.get("node", "all")
         return render_template("embed.html", widget=widget_type, theme=theme, node_id=node_id)
 
+    @app.get("/dashboard/analytics")
+    @require_auth
+    def analytics_page():
+        return render_template("dashboard.html")
+
+    @app.get("/dashboard/api/analytics")
+    @require_auth
+    def analytics_report():
+        raw_weeks = request.args.get("weeks", "4")
+        if not raw_weeks.isascii() or not raw_weeks.isdecimal() or len(raw_weeks) > 2:
+            return jsonify(error="invalid_weeks"), 400
+        weeks = int(raw_weeks)
+        if not 1 <= weeks <= 57:
+            return jsonify(error="invalid_weeks"), 400
+        try:
+            return jsonify(broker_call(active.broker_socket, "website_analytics", weeks=weeks))
+        except BrokerError:
+            return jsonify(error="analytics_source_unavailable"), 503
+
     @app.get("/dashboard/api/usage")
     @require_auth
     def usage():

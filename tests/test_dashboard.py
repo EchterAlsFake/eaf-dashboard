@@ -364,3 +364,34 @@ def test_nodes_use_host_vitals_and_agent_download(app, monkeypatch):
     agent = client.get("/dashboard/static/eaf-node-agent.py")
     assert agent.status_code == 200
     assert b"--token-file" in agent.data
+
+
+def test_website_analytics_requires_authentication_and_bounds_window(app, monkeypatch):
+    client = app.test_client()
+    assert client.get('/dashboard/api/analytics').status_code == 401
+    assert client.get('/dashboard/analytics').status_code == 401
+    client, _store = authenticated_client(app)
+    calls = []
+    def report(socket, operation, **arguments):
+        calls.append((operation, arguments))
+        return {'rows': [], 'minimum_count': 20}
+    monkeypatch.setattr('dashboard.app.broker_call', report)
+    response = client.get('/dashboard/api/analytics?weeks=8')
+    assert response.status_code == 200
+    assert calls == [('website_analytics', {'weeks': 8})]
+    assert response.headers['Cache-Control'] == 'no-store'
+    for value in ('0', '58', '-1', '1.5', 'abc', '9999999999999999999999'):
+        assert client.get('/dashboard/api/analytics?weeks=' + value).status_code == 400
+    assert b'Website analytics' in client.get('/dashboard/analytics').data
+
+
+def test_website_analytics_unavailable_is_not_zero_activity(app, monkeypatch):
+    from dashboard.broker_client import BrokerError
+    client, _store = authenticated_client(app)
+    def unavailable(*args, **kwargs):
+        raise BrokerError('private synthetic exception')
+    monkeypatch.setattr('dashboard.app.broker_call', unavailable)
+    response = client.get('/dashboard/api/analytics')
+    assert response.status_code == 503
+    assert response.json == {'error': 'analytics_source_unavailable'}
+    assert 'private' not in response.get_data(as_text=True)
