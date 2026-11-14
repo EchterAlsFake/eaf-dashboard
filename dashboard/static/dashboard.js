@@ -645,30 +645,50 @@ fetch("${originUrl}/dashboard/api/embed/data")
     updatePlayground();
   }
 
-  let analyticsWeeks = 4;
+  let analyticsDays = 28;
+  let analyticsSearch = '';
+  let analyticsLoading = false;
   async function websiteAnalytics() {
-    const data = await eafAuth.json(`/dashboard/api/analytics?weeks=${analyticsWeeks}`);
-    const views = new Map(data.rows.filter(row => row.action === 'pageview').map(row => [`${row.week}:${row.page}`, row.count]));
-    const rows = data.rows.map(row => ({
-      week_start_utc: row.week, page: row.page, action: pretty(row.action), events: row.count,
-      clicks_per_100_displays: row.action !== 'pageview' && views.has(`${row.week}:${row.page}`)
-        ? (100 * row.count / views.get(`${row.week}:${row.page}`)).toFixed(1) : '—',
-    }));
-    content.innerHTML = `<section>
-      <div class="section-head"><div><p class="eyebrow">AGGREGATE COUNTS</p><h2>Website analytics</h2></div>
-        <label>Completed weeks <select id="analytics-weeks">${[4, 8, 12, 26, 52].map(weeks => `<option value="${weeks}" ${weeks === analyticsWeeks ? 'selected' : ''}>${weeks}</option>`).join('')}</select></label></div>
-      <p>${data.enabled ? 'Collection enabled' : 'Collection disabled'} · Updated ${esc(data.updated_day)} · UTC</p>
-      ${data.stale ? '<p class="empty">The report is out of date. Displayed counts may not cover the latest completed week.</p>' : ''}
-      <p>${esc(data.start)} through ${esc(data.end_exclusive)} (end exclusive). Only completed Monday–Sunday weeks are shown. Counts below 20 are omitted; missing rows mean unreported activity, not zero.</p>
-      <p>These counts measure page displays and actions, including repeat clicks. They do not identify people or connect visits to purchases. Clicks per 100 displays compare actions on the same page and week; they are not user conversion or abandonment rates. Downloads count clicks, not completed downloads or installations.</p>
-      ${rows.length ? table(rows, '', 'analytics-search') : '<p class="empty">No reportable activity yet. Results appear after a week completes and a page/action reaches 20 events. Earlier browsing history cannot be reconstructed.</p>'}
-    </section>`;
-    attachTableSearch('analytics-search');
-    document.getElementById('analytics-weeks').addEventListener('change', event => {
-      analyticsWeeks = Number(event.target.value);
-      websiteAnalytics().catch(showError);
-    });
+    if (analyticsLoading) return;
+    analyticsLoading = true;
+    try {
+      const search = document.getElementById('analytics-search');
+      if (search) analyticsSearch = search.value;
+      const focusId = document.activeElement?.id;
+      const data = await eafAuth.json(`/dashboard/api/analytics?days=${analyticsDays}`);
+      if (activeViewName !== 'analytics') return;
+      const period = row => row.day || row.week;
+      const views = new Map(data.rows.filter(row => row.action === 'pageview').map(row => [`${period(row)}:${row.page}`, row.count]));
+      const rows = data.rows.map(row => ({
+        period_start_utc: period(row), page: row.page, action: pretty(row.action), events: row.count,
+        actions_per_100_displays: !row.action.startsWith('pageview') && views.has(`${period(row)}:${row.page}`)
+          ? (100 * row.count / views.get(`${period(row)}:${row.page}`)).toFixed(1) : '—',
+      }));
+      content.innerHTML = `<section>
+        <div class="section-head"><div><p class="eyebrow">AGGREGATE COUNTS</p><h2>Website analytics</h2></div>
+          <label>Days <select id="analytics-days">${[7,28,90].map(days => `<option value="${days}" ${days === analyticsDays ? 'selected' : ''}>${days}</option>`).join('')}</select></label></div>
+        <p>${data.enabled ? 'Collection enabled' : 'Collection disabled'} · Snapshot ${esc(data.generated_at || data.updated_day)} · UTC</p>
+        ${data.legacy ? '<p class="empty">The website still exports completed weeks. Deploy the updated Server collector to enable daily totals including today.</p>' : '<p>Daily totals include today, which is incomplete. The exporter refreshes every minute; this dashboard polls every minute while this tab is visible.</p>'}
+        ${data.stale ? '<p class="empty">The snapshot is stale. These counts may not reflect recent activity.</p>' : ''}
+        <p>${esc(data.start)} through ${esc(data.end_exclusive)} (end exclusive). Cells below 20 events are omitted. Missing rows mean unreported activity, not zero.</p>
+        <p>Events include repeated displays, clicks and feedback. Viewport categories are approximate. Actions per 100 displays are event ratios, not user conversion rates. Visibility counts once per placement and page load. Downloads count clicks, not completed installations. Valid checkout starts passed server validation; sandbox and production are separate.</p>
+        <p>Country totals are separate page-display counts, never joined to pages, device categories or feedback. Purchases and proceeds remain in the separate Revenue view; no browsing-to-purchase attribution is inferred. Frequent snapshots and outside knowledge can reveal sparse changes despite suppression.</p>
+        ${rows.length ? table(rows, '', 'analytics-search') : '<p class="empty">No reportable activity for this period. A daily cell must reach 20 events.</p>'}
+        <h3>Country totals</h3>${data.countries?.length ? table(data.countries) : '<p>No reportable country totals.</p>'}
+      </section>`;
+      attachTableSearch('analytics-search');
+      const newSearch = document.getElementById('analytics-search');
+      if (newSearch) { newSearch.value = analyticsSearch; newSearch.dispatchEvent(new Event('input')); }
+      document.getElementById('analytics-days').addEventListener('change', event => {
+        analyticsDays = Number(event.target.value);
+        websiteAnalytics().catch(showError);
+      });
+      if (focusId === 'analytics-days' || focusId === 'analytics-search') document.getElementById(focusId)?.focus();
+    } finally { analyticsLoading = false; }
   }
+  setInterval(() => {
+    if (activeViewName === 'analytics' && !document.hidden) websiteAnalytics().catch(showError);
+  }, 60000);
 
   async function traffic(range = 30) {
     const data = await eafAuth.json(`/dashboard/api/usage?days=${range}`);
@@ -847,6 +867,7 @@ fetch("${originUrl}/dashboard/api/embed/data")
     const secs = Number(autoRefreshSelect?.value || 0);
     if (secs > 0) {
       refreshTimer = setInterval(() => {
+        if (activeViewName === 'analytics') return;
         if (activeViewName === 'updates' && (document.getElementById('update-plan')?.textContent || Date.now() - updatesLastInteraction < 120000 || ['update-source', 'update-scope', 'update-value'].includes(document.activeElement?.id))) return;
         const fn = views[activeViewName] || (() => records(activeViewName));
         fn().catch(console.error);

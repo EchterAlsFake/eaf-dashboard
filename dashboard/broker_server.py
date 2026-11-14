@@ -134,6 +134,7 @@ class Broker:
     def dispatch(self, operation: str, arguments: dict[str, Any]) -> Any:
         handlers = {
             "overview": self.overview,
+            "website_analytics": lambda: self.website_analytics(arguments),
             "system_vitals": self.system_vitals,
             "probe_node": lambda: self.probe_node(arguments),
             "scan_lan": self.scan_lan,
@@ -354,6 +355,17 @@ class Broker:
         except (OSError, ValueError):
             pass
         return devices
+
+    def website_analytics(self, arguments):
+        try:
+            from .aggregate_analytics_report import read_report, ReportUnavailable
+        except ImportError:
+            from aggregate_analytics_report import read_report, ReportUnavailable
+        try:
+            return read_report(self.settings.server_database.parent / "aggregate-analytics-report.json",
+                               arguments.get("weeks", 4), days=arguments.get("days"))
+        except ReportUnavailable:
+            raise OperationError("Aggregate analytics report unavailable") from None
 
     def overview(self) -> dict:
         with _connect(self.settings.server_database) as connection:

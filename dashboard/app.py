@@ -436,6 +436,16 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.get("/dashboard/api/analytics")
     @require_auth
     def analytics_report():
+        if "days" in request.args:
+            raw_days = request.args["days"]
+            if not raw_days.isascii() or not raw_days.isdecimal() or len(raw_days) > 2 or not 1 <= int(raw_days) <= 90:
+                return jsonify(error="invalid_days"), 400
+            try:
+                response = jsonify(broker_call(active.broker_socket, "website_analytics", days=int(raw_days)))
+                response.headers["Cache-Control"] = "no-store"
+                return response
+            except BrokerError:
+                return jsonify(error="analytics_source_unavailable"), 503
         raw_weeks = request.args.get("weeks", "4")
         if not raw_weeks.isascii() or not raw_weeks.isdecimal() or len(raw_weeks) > 2:
             return jsonify(error="invalid_weeks"), 400
