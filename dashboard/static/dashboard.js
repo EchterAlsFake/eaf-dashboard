@@ -674,9 +674,10 @@ fetch("${originUrl}/dashboard/api/embed/data")
         <p>Events include repeated displays, clicks and feedback. Viewport categories are approximate. Actions per 100 displays are event ratios, not user conversion rates. Visibility counts once per placement and page load. Downloads count clicks, not completed installations. Valid checkout starts passed server validation; sandbox and production are separate.</p>
         <p>Country totals are separate page-display counts, never joined to pages, device categories or feedback. Purchases and proceeds remain in the separate Revenue view; no browsing-to-purchase attribution is inferred. Frequent snapshots and outside knowledge can reveal sparse changes despite suppression.</p>
         ${rows.length ? table(rows, '', 'analytics-search') : '<p class="empty">No reportable activity for this period. A daily cell must reach 20 events.</p>'}
-        <h3>Country totals</h3>${data.countries?.length ? table(data.countries) : '<p>No reportable country totals.</p>'}
+        <h3>Country totals</h3>${data.countries?.length ? table(data.countries, '', 'analytics-countries-search') : '<p>No reportable country totals.</p>'}
       </section>`;
       attachTableSearch('analytics-search');
+      if (data.countries?.length) attachTableSearch('analytics-countries-search');
       const newSearch = document.getElementById('analytics-search');
       if (newSearch) { newSearch.value = analyticsSearch; newSearch.dispatchEvent(new Event('input')); }
       document.getElementById('analytics-days').addEventListener('change', event => {
