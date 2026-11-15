@@ -13,3 +13,4 @@ dashboard/broker_service.py
 deploy/
 SECURITY.md
 tests/test_revenue.py
+uv.lock
